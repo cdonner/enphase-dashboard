@@ -248,3 +248,10 @@ button.sig-label { font-size: 13px; color: var(--text-primary); padding: 0 4px; 
 .sig-label-input { font: inherit; font-size: 13px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); width: 120px; }
 .saved { color: #0ca30c; }
 .ai-note { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--hover); }
+
+.size-filter { align-items: center; gap: 12px; margin: 8px 0 4px; }
+.size-filter select { font: inherit; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); }
+.co-start { padding: 4px 8px; border-left: 3px solid var(--accent); background: var(--hover); border-radius: 4px; }
+.name-row { align-items: center; flex-wrap: nowrap; }
+.name-row .name-form { flex: 1; min-width: 0; }
+button.sig-label { white-space: nowrap; }

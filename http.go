@@ -258,17 +258,23 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 	// Name a signature. A name that already exists adds the signature to that appliance.
 	mux.HandleFunc("POST /api/appliances", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			Name string    `json:"name"`
-			DP   []float64 `json:"dp"`
-			DQ   []float64 `json:"dq"`
+			Name   string    `json:"name"`
+			DP     []float64 `json:"dp"`
+			DQ     []float64 `json:"dq"`
+			Ignore bool      `json:"ignore"` // hide this signature instead of naming it
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" || len(body.DP) == 0 || len(body.DQ) != len(body.DP) {
-			writeErr(w, 400, errors.New("name, dp and dq are required"))
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || (strings.TrimSpace(body.Name) == "" && !body.Ignore) || len(body.DP) == 0 || len(body.DQ) != len(body.DP) {
+			writeErr(w, 400, errors.New("name (or ignore), dp and dq are required"))
 			return
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		a := s.addSignature(strings.TrimSpace(body.Name), Sig{DP: body.DP, DQ: body.DQ})
+		var a Appliance
+		if body.Ignore {
+			a = s.ignoreSignature(Sig{DP: body.DP, DQ: body.DQ})
+		} else {
+			a = s.addSignature(strings.TrimSpace(body.Name), Sig{DP: body.DP, DQ: body.DQ})
+		}
 		if err := s.saveAppliances(); err != nil {
 			writeErr(w, 500, err)
 			return

@@ -10,6 +10,33 @@ const TYPES = [
 ];
 const typeOf = (legs) => TYPES.find((t) => t.test(legs ?? ''));
 
+// Smallest unnamed load shown; small steps are numerous and rarely worth naming.
+const SIZES = [60, 150, 300, 1000];
+function loadMinW() {
+  try {
+    const v = Number(localStorage.getItem('appliances.minW'));
+    return SIZES.includes(v) ? v : 150;
+  } catch {
+    return 150;
+  }
+}
+
+// Drops unnamed runs below minW; activities left without runs disappear.
+function filterSmall(acts, minW) {
+  let hidden = 0;
+  const out = [];
+  for (const a of acts) {
+    if (a.appliance) {
+      out.push(a);
+      continue;
+    }
+    const spans = a.spans.filter((sp) => sp.desc.powerW >= minW);
+    hidden += a.spans.length - spans.length;
+    if (spans.length) out.push({ ...a, spans });
+  }
+  return [out, hidden];
+}
+
 const fmtDur = (s) => {
   if (s < 60) return `${Math.round(s)}s`;
   const m = Math.round(s / 60);
@@ -54,12 +81,25 @@ function Selected({ sel, onName, onChanged, onClose }) {
         </button>
       </div>
       {!a.appliance ? (
-        <NameForm
-          onSave={async (name) => {
-            await onName(name, sp.desc);
-            onClose();
-          }}
-        />
+        <div className="row name-row">
+          <NameForm
+            onSave={async (name) => {
+              await onName(name, sp.desc);
+              onClose();
+            }}
+          />
+          <button
+            className="ghost"
+            title="Hide this signature from the timeline and the naming list"
+            onClick={async () => {
+              await api('/appliances', { method: 'POST', body: { ignore: true, dp: sp.desc.dp, dq: sp.desc.dq } });
+              onChanged();
+              onClose();
+            }}
+          >
+            Ignore
+          </button>
+        </div>
       ) : (
         <div className="sel-actions">
           <form
@@ -315,18 +355,45 @@ function Unnamed({ clusters, onChanged }) {
               ))}
             </div>
           )}
+          {c.with?.length > 0 && (
+            <div className="small co-start">
+              Starts together with{' '}
+              {c.with.map((w, i) => (
+                <span key={w.name}>
+                  {i > 0 && ', '}
+                  <strong>{w.name}</strong> in {w.runs} of {c.runs} runs
+                </span>
+              ))}
+              . Probably part of it: give it the same name.
+            </div>
+          )}
           <div className="muted small">
             e.g.{' '}
             {c.examples
               .map((t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }))
               .join(', ')}
           </div>
-          <NameForm
-            onSave={async (name) => {
-              await api('/appliances', { method: 'POST', body: { name, dp: c.signature.dp, dq: c.signature.dq } });
-              onChanged();
-            }}
-          />
+          <div className="row name-row">
+            <NameForm
+              onSave={async (name) => {
+                await api('/appliances', { method: 'POST', body: { name, dp: c.signature.dp, dq: c.signature.dq } });
+                onChanged();
+              }}
+            />
+            <button
+              className="ghost"
+              title="Hide this signature from the timeline and this list"
+              onClick={async () => {
+                await api('/appliances', {
+                  method: 'POST',
+                  body: { ignore: true, dp: c.signature.dp, dq: c.signature.dq },
+                });
+                onChanged();
+              }}
+            >
+              Ignore
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -523,6 +590,11 @@ function Known({ appliances, onChanged }) {
                     onChanged();
                   }}
                 />
+              ) : a.ignored ? (
+                <>
+                  <strong>Ignored</strong>
+                  <div className="muted small">Hidden from the timeline and the naming list</div>
+                </>
               ) : (
                 <strong>{a.name}</strong>
               )}
@@ -532,12 +604,12 @@ function Known({ appliances, onChanged }) {
                 {(a.described ?? []).map((d, n) => (
                   <li key={n}>
                     <span className="rect-key" style={{ background: typeOf(d.legs).color }} />
-                    <SigLabel appliance={a} n={n} onChanged={onChanged} />
+                    {!a.ignored && <SigLabel appliance={a} n={n} onChanged={onChanged} />}
                     <span className="muted small">{sigText(d)}</span>
-                    {a.described.length > 1 && (
+                    {(a.described.length > 1 || a.ignored) && (
                       <button
                         className="ghost link"
-                        title="Remove this signature from the appliance"
+                        title={a.ignored ? 'Show this signature again' : 'Remove this signature from the appliance'}
                         aria-label={`Remove signature ${sigText(d)}`}
                         onClick={async () => {
                           await api(`/appliances/${a.id}/signatures/${n}`, { method: 'DELETE' });
@@ -553,9 +625,11 @@ function Known({ appliances, onChanged }) {
             </td>
             <td>
               <div className="row">
-                <button className="ghost" onClick={() => setEditing(editing === a.id ? null : a.id)}>
-                  {editing === a.id ? 'Cancel' : 'Rename'}
-                </button>
+                {!a.ignored && (
+                  <button className="ghost" onClick={() => setEditing(editing === a.id ? null : a.id)}>
+                    {editing === a.id ? 'Cancel' : 'Rename'}
+                  </button>
+                )}
                 <button
                   className="ghost danger"
                   onClick={async () => {
@@ -563,7 +637,7 @@ function Known({ appliances, onChanged }) {
                     onChanged();
                   }}
                 >
-                  Forget
+                  {a.ignored ? 'Show all again' : 'Forget'}
                 </button>
               </div>
             </td>
@@ -589,7 +663,18 @@ export default function Appliances() {
   };
   const knownNames = (lists.data?.appliances ?? []).map((a) => a.name);
 
-  const acts = (day.data?.date === date && day.data.activities) || [];
+  const [minW, setMinW] = useState(loadMinW);
+  const chooseMinW = (v) => {
+    setMinW(v);
+    try {
+      localStorage.setItem('appliances.minW', String(v));
+    } catch {
+      // not persisted
+    }
+  };
+  const [acts, hiddenRuns] = filterSmall((day.data?.date === date && day.data.activities) || [], minW);
+  const allClusters = lists.data?.unnamed ?? [];
+  const clusters = allClusters.filter((c) => c.signature.powerW >= minW);
   const running = acts.filter((a) => a.end == null);
   const named = acts.filter((a) => a.appliance);
   const sum = (xs) => xs.reduce((s, a) => s + a.energyWh, 0);
@@ -647,6 +732,23 @@ export default function Appliances() {
             <div className="tile-sub">{acts.length - named.length} activities</div>
           </div>
         </div>
+        <div className="row size-filter">
+          <label className="small">
+            Show unnamed loads from{' '}
+            <select value={minW} onChange={(e) => chooseMinW(Number(e.target.value))}>
+              {SIZES.map((v) => (
+                <option key={v} value={v}>
+                  {fmtW(v)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {hiddenRuns > 0 && (
+            <span className="muted small">
+              {hiddenRuns} smaller {hiddenRuns === 1 ? 'run' : 'runs'} hidden
+            </span>
+          )}
+        </div>
         <div className="legend">
           {TYPES.map((t) => (
             <span key={t.key} className="legend-item">
@@ -702,7 +804,13 @@ export default function Appliances() {
           {lists.data && (
             <AskAI providers={lists.data.aiProviders} household={lists.data.household} onChanged={reload} />
           )}
-          <Unnamed clusters={lists.data?.unnamed} onChanged={reload} />
+          <Unnamed clusters={clusters} onChanged={reload} />
+          {allClusters.length > clusters.length && (
+            <p className="muted small">
+              {allClusters.length - clusters.length} smaller{' '}
+              {allClusters.length - clusters.length === 1 ? 'signature' : 'signatures'} hidden (under {fmtW(minW)}).
+            </p>
+          )}
         </section>
         <section className="card">
           <h2>Known appliances</h2>

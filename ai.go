@@ -63,6 +63,15 @@ and at which hours of the day it starts. The household description from the owne
 which appliances exist; prefer those, and do not suggest appliances the owner says are off,
 absent or on gas, unless the evidence is strong (then say so in the reason).
 
+Loads that switch on and off while nobody is using anything are usually equipment that runs on
+its own: furnace or air handler blowers (often several speeds, each a separate signature), inducer
+fans and igniters, refrigerator and freezer compressors and their defrost or ice-maker heaters,
+dehumidifiers, sump or well pumps, water treatment, aquarium or terrarium heaters, heated seats,
+and electronics waking from standby. A signature that starts together with an identified
+appliance is very likely part of it (e.g. another stage or motor of the same furnace). If nothing
+plausible fits, answer with a single guess named "Unknown" and low confidence rather than inventing
+an appliance the owner doesn't have.
+
 Give up to 3 guesses per signature, best first. Use plain appliance names a homeowner would
 use (e.g. "Coffee maker warming plate", "Upstairs furnace blower"). Confidence "high" only
 when power, circuit, character and timing all fit one appliance. Keep each reason to one
@@ -123,11 +132,15 @@ func describeForAI(c Cluster, legs int) string {
 	if c.MedianGapSec > 0 {
 		gap = "every " + fmtSeconds(c.MedianGapSec)
 	}
+	with := ""
+	for _, w := range c.With {
+		with += fmt.Sprintf("; starts within %s of %q in %d of its %d runs", coStartWindow, w.Name, w.Runs, c.Runs)
+	}
 	return fmt.Sprintf("- key %s: %.0f W step, %s, %s (reactive/real %.2f); %d runs on %d of the last %d days; "+
-		"on for %s typically (range %s-%s); starts %s; energy %s in the period; start counts by hour (hh:count) %s",
+		"on for %s typically (range %s-%s); starts %s; energy %s in the period; start counts by hour (hh:count) %s%s",
 		c.Key, c.Signature.PowerW, c.Signature.Legs, c.Signature.Character, reactiveRatio(c.Signature),
 		c.Runs, c.Days, clusterDays, fmtSeconds(c.MedianOnSec), fmtSeconds(c.ShortOnSec), fmtSeconds(c.LongOnSec),
-		gap, fmtEnergy(c.EnergyWh), strings.Join(hours, " "))
+		gap, fmtEnergy(c.EnergyWh), strings.Join(hours, " "), with)
 }
 
 func fmtEnergy(wh float64) string {
@@ -158,6 +171,9 @@ func (s *Server) aiPrompt() (string, error) {
 	household := strings.TrimSpace(s.settings.Household)
 	var named []string
 	for _, a := range s.appliances {
+		if a.Ignored {
+			continue
+		}
 		var sigs []string
 		for _, sg := range a.Signatures {
 			d := describe(sg.DP, sg.DQ)

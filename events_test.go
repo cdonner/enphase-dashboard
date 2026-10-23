@@ -389,3 +389,54 @@ func TestBigSwitchOffWithoutStartIsRecorded(t *testing.T) {
 		t.Errorf("signature %+v", sig)
 	}
 }
+
+func TestCoStartsAndIgnore(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	s.addSignature("Furnace", Sig{DP: []float64{485, 0}, DQ: []float64{400, 0}})
+	day := dayKey(time.Now())
+	base := startOfDay(time.Now()).UnixMilli() + 3_600_000
+	var runs []Run
+	for i := int64(0); i < 3; i++ {
+		t0 := base + i*1_800_000
+		// furnace blower, an unnamed 82 W motor 5 s later, and a 73 W heater an hour off
+		runs = append(runs,
+			Run{Start: t0, End: ptr(t0 + 300_000), DP: []float64{485, 0}, DQ: []float64{400, 0}},
+			Run{Start: t0 + 5000, End: ptr(t0 + 360_000), DP: []float64{82, 0}, DQ: []float64{70, 0}},
+			Run{Start: t0 + 900_000, End: ptr(t0 + 921_000), DP: []float64{73, 0}, DQ: []float64{2, 0}},
+		)
+	}
+	s.writeJSON("events/"+day+".json", dayRuns{Runs: runs}, 0o644)
+
+	var motor, heater *Cluster
+	cl := s.clusters()
+	for i := range cl {
+		switch {
+		case near(cl[i].Signature.PowerW, 82, 5):
+			motor = &cl[i]
+		case near(cl[i].Signature.PowerW, 73, 5):
+			heater = &cl[i]
+		}
+	}
+	if motor == nil || len(motor.With) != 1 || motor.With[0].Name != "Furnace" || motor.With[0].Runs != 3 {
+		t.Errorf("motor co-starts: %+v", motor)
+	}
+	if heater == nil || len(heater.With) != 0 {
+		t.Errorf("heater should have no co-starts: %+v", heater)
+	}
+	if !strings.Contains(describeForAI(*motor, 2), `starts within 15s of "Furnace" in 3 of its 3 runs`) {
+		t.Errorf("AI description: %s", describeForAI(*motor, 2))
+	}
+
+	// Ignoring the heater hides it from the naming list and the timeline.
+	s.ignoreSignature(Sig{DP: []float64{73, 0}, DQ: []float64{2, 0}})
+	for _, c := range s.clusters() {
+		if near(c.Signature.PowerW, 73, 5) {
+			t.Error("ignored signature still listed for naming")
+		}
+	}
+	for _, a := range s.activities(runs, nil, nowMs()) {
+		if near(a.Signature.PowerW, 73, 5) {
+			t.Error("ignored signature still on the timeline")
+		}
+	}
+}

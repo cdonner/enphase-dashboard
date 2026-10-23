@@ -370,6 +370,18 @@ dryer, oven, AC/heat pump, well pump, microwave, kettle, laser printer, furnace 
 suggestion or type a name. The name then applies to all past and future runs with that signature.
 To identify one, switch a suspect on or off and watch for the bar on today's timeline.
 
+**Keeping it manageable.** Houses have many small loads that switch on and off by themselves. Three
+things help:
+
+- **Size filter.** *Show unnamed loads from* (default 150 W) hides smaller unnamed runs and
+  signatures. Named appliances always show.
+- **Starts together with.** When a signature usually starts within 15 seconds of a named appliance,
+  its card says so, e.g. *starts together with Furnace in 3 of 3 runs*. That usually means it's
+  another part of the same appliance (a second blower speed, an inducer fan, an igniter), so give it
+  the same name.
+- **Ignore.** Hides a signature from the timeline and the naming list. Ignored signatures are listed
+  under *Known appliances*, where you can show them again.
+
 **Limitations.** This works best for appliances that switch on and off at a fixed power, roughly
 60 W and up. It can't separate:
 

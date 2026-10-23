@@ -219,6 +219,9 @@ func (m *MQTT) publishDiscovery() {
 	m.s.mu.Unlock()
 	current := map[string]bool{}
 	for _, a := range apps {
+		if a.Ignored {
+			continue
+		}
 		current[a.ID] = true
 		topic := m.cfg.Topic + "/appliance/" + a.ID
 		entities = append(entities,
@@ -298,6 +301,9 @@ func (m *MQTT) publishState() {
 	// Appliance states from today's runs plus the runs on right now.
 	states := map[string]*applianceState{}
 	for _, a := range s.appliances {
+		if a.Ignored {
+			continue
+		}
 		var sigs []string
 		for _, sg := range a.Signatures {
 			d := describe(sg.DP, sg.DQ)
@@ -313,6 +319,9 @@ func (m *MQTT) publishState() {
 			return
 		}
 		a := states[app.ID]
+		if a == nil { // ignored
+			return
+		}
 		end := now
 		if r.End != nil {
 			end = *r.End

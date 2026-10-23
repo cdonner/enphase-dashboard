@@ -44,6 +44,8 @@ type Appliance struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	Signatures []Sig  `json:"signatures"`
+	// Ignored signatures are hidden from the timeline and the naming list.
+	Ignored bool `json:"ignored,omitempty"`
 	// Single signature as stored before appliances could have several; migrated on load.
 	DP []float64 `json:"dp,omitempty"`
 	DQ []float64 `json:"dq,omitempty"`
@@ -77,6 +79,20 @@ func (s *Server) addSignature(name string, sig Sig) Appliance {
 	}
 	a := Appliance{ID: newID(), Name: name, Signatures: []Sig{sig}}
 	s.appliances = append(s.appliances, a)
+	return a
+}
+
+const ignoredName = "Ignored"
+
+// ignoreSignature adds a signature to the "Ignored" list. Caller holds s.mu.
+func (s *Server) ignoreSignature(sig Sig) Appliance {
+	a := s.addSignature(ignoredName, sig)
+	for i := range s.appliances {
+		if s.appliances[i].ID == a.ID {
+			s.appliances[i].Ignored = true
+			return s.appliances[i]
+		}
+	}
 	return a
 }
 
@@ -307,6 +323,9 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 			end = *r.End
 		}
 		app, sigN := s.matchSignature(r.DP, r.DQ)
+		if app != nil && app.Ignored {
+			continue
+		}
 		var name, id *string
 		label := ""
 		if app != nil {
@@ -365,7 +384,16 @@ type Cluster struct {
 	ShortOnSec   float64 `json:"shortOnSec"`   // 10th percentile on-time
 	LongOnSec    float64 `json:"longOnSec"`    // 90th percentile on-time
 	MedianGapSec float64 `json:"medianGapSec"` // typical time between runs (0 if unknown)
+	// Named appliances that started within a few seconds of this signature's runs.
+	With []CoStart `json:"with"`
 }
+
+type CoStart struct {
+	Name string `json:"name"`
+	Runs int    `json:"runs"` // of this signature's runs that started together with it
+}
+
+const coStartWindow = 15 * time.Second
 
 // clusterKey is a stable id for a signature: legs used and power rounded on a log scale.
 func clusterKey(dp []float64) string {
@@ -392,11 +420,23 @@ func (s *Server) clusters() []Cluster {
 		samples []int64
 		starts  []int64
 		hours   [24]int
+		with    map[string]int
 	}
 	var groups []*acc
 	for d := 0; d < clusterDays; d++ {
 		date := dayKey(time.Now().AddDate(0, 0, -d))
-		for _, r := range s.loadDayRuns(date) {
+		runs := s.loadDayRuns(date)
+		type named struct {
+			start int64
+			name  string
+		}
+		var namedStarts []named
+		for _, r := range runs {
+			if a := s.applianceFor(r); a != nil && !a.Ignored {
+				namedStarts = append(namedStarts, named{r.Start, a.Name})
+			}
+		}
+		for _, r := range runs {
 			if r.End == nil || s.applianceFor(r) != nil {
 				continue
 			}
@@ -408,7 +448,7 @@ func (s *Server) clusters() []Cluster {
 				}
 			}
 			if g == nil {
-				g = &acc{dp: append([]float64{}, r.DP...), dq: append([]float64{}, r.DQ...), days: map[string]bool{}}
+				g = &acc{dp: append([]float64{}, r.DP...), dq: append([]float64{}, r.DQ...), days: map[string]bool{}, with: map[string]int{}}
 				groups = append(groups, g)
 			}
 			// Running mean keeps the centroid representative.
@@ -425,6 +465,13 @@ func (s *Server) clusters() []Cluster {
 			}
 			g.starts = append(g.starts, r.Start)
 			g.hours[time.UnixMilli(r.Start).Hour()]++
+			seen := map[string]bool{}
+			for _, n := range namedStarts {
+				if !seen[n.name] && math.Abs(float64(n.start-r.Start)) <= float64(coStartWindow.Milliseconds()) {
+					seen[n.name] = true
+					g.with[n.name]++
+				}
+			}
 		}
 	}
 	out := []Cluster{}
@@ -448,6 +495,13 @@ func (s *Server) clusters() []Cluster {
 			sort.Float64s(gaps)
 			c.MedianGapSec = gaps[len(gaps)/2]
 		}
+		c.With = []CoStart{}
+		for name, n := range g.with {
+			if n*2 >= g.n { // at least half of its runs
+				c.With = append(c.With, CoStart{name, n})
+			}
+		}
+		sort.Slice(c.With, func(i, j int) bool { return c.With[i].Runs > c.With[j].Runs })
 		if ai, ok := s.aiSuggestions[c.Key]; ok {
 			c.AI = &ai
 		}
