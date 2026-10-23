@@ -1,0 +1,23 @@
+# Docker Compose / QNAP Container Station.
+# Settings come from a .env file next to this file (see .env.example)
+# or can be filled in directly below.
+services:
+  solar-dashboard:
+    image: ghcr.io/cdonner/enphase-dashboard:latest
+    build: .
+    container_name: solar-dashboard
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      ENVOY_HOST: ${ENVOY_HOST:-envoy.local}
+      TZ: ${TZ:-UTC}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      ENPHASE_API_KEY: ${ENPHASE_API_KEY:-}
+      ENPHASE_CLIENT_ID: ${ENPHASE_CLIENT_ID:-}
+      ENPHASE_CLIENT_SECRET: ${ENPHASE_CLIENT_SECRET:-}
+    volumes:
+      - solar-data:/app/data
+
+volumes:
+  solar-data:

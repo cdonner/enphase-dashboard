@@ -1,0 +1,26 @@
+{
+  "name": "enphase-dashboard",
+  "version": "1.0.0",
+  "description": "Self-hosted dashboard for Enphase IQ Gateway (Envoy) systems: live power, daily energy, microinverters, EV charger.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"node --env-file-if-exists=.env --watch server/index.js\" \"vite\"",
+    "build": "vite build",
+    "start": "vite build && node --env-file-if-exists=.env server/index.js"
+  },
+  "dependencies": {
+    "express": "^5.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "vite": "^8.3.5"
+  }
+}
