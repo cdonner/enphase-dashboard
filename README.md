@@ -40,7 +40,7 @@ What you need:
 
 **QNAP Container Station:** go to *Applications → Create*, paste `compose.yaml`, and fill in the
 `environment:` values directly. Container Station doesn't read `.env` files. The image is published
-for `amd64` and `arm64` at `ghcr.io/cdonner/enphase-dashboard`.
+for `amd64`, `arm64` and 32-bit `arm/v7` (e.g. ARM-based QNAP models such as the TS-431X series) at `ghcr.io/cdonner/enphase-dashboard`.
 
 Data, tokens, and credentials are kept in the `solar-data` volume, so back it up if you care about
 the history.

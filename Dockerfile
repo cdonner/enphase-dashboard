@@ -1,4 +1,5 @@
-FROM node:22-alpine AS build
+# The UI build output is platform-independent, so build it natively on the CI runner.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
