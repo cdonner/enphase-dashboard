@@ -392,11 +392,25 @@ Requests are sent only when you click, and use Claude Haiku 5.5 by default: abou
 2-4K output tokens, a fraction of a cent per request. Set `AI_MODEL=claude-opus-5-5` for the most
 capable model, at roughly 5-10 cents per request.
 
-**Gemini** has a free tier: create a key at <https://aistudio.google.com> (*Get API key*) in a
-Google Cloud project **without billing enabled**, so it stays free, and set `GEMINI_API_KEY`. On the
-free tier Google may use requests to improve its products; the request contains only the summary
-described above and your household text. The dashboard picks the newest *Flash* model available to
-the key, or set `GEMINI_MODEL`. When the free-tier rate limit is reached, wait a minute and try again.
+**Gemini** has a free tier. To get a key:
+
+1. Open <https://aistudio.google.com>, sign in with a Google account, and go to **Get API key → Create
+   API key**.
+2. Pick the Google Cloud project for the key. AI Studio creates one for you called **Default Gemini
+   Project** and lists it under *imported projects*, even if you never imported anything. That one
+   works. For a separate project, choose **Create project**, or create it at
+   <https://console.cloud.google.com> and then pick it under **Import project**.
+3. Make sure the project has **no billing account** attached, so the key stays on the free tier and
+   can't cost anything. The worst case is a "rate limit reached" message. The *API keys* page in AI
+   Studio shows each key's project and plan; it should say *Free*. With billing enabled, requests
+   are charged at paid rates.
+4. Set the key as `GEMINI_API_KEY` in the dashboard's environment and restart it. An **Ask Gemini**
+   button then appears.
+
+On the free tier Google may use requests to improve its products. The request contains only the
+summary described above and your household text. The dashboard picks the newest *Flash* model
+available to the key, or set `GEMINI_MODEL`. When the free-tier rate limit is reached, wait a minute
+and try again.
 
 Workload identity federation for Claude also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
 `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE`
