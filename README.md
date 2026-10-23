@@ -13,6 +13,11 @@ local network, and can optionally use the **Enphase cloud API** to fill in histo
 
 Not affiliated with or endorsed by Enphase Energy.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <img alt="Dashboard: live production and consumption, today's power curve, daily energy, microinverters, and EV charging sessions" src="docs/screenshot.png">
+</picture>
+
 ## How it works
 
 ```
@@ -95,9 +100,17 @@ credentials is fine, because it only polls the gateway.
 
 ### 4. Updating
 
-Every push to `main` publishes a new `latest` image. To update, pull the image again and recreate
-the container: in Container Station, open the application and choose *Recreate* (or *Pull* then
-*Recreate*); in Container Manager, go to *Project → Action → Build*. Your data folder is kept.
+Every push to `main` publishes a new `latest` image. NAS container apps usually keep using the copy
+they already downloaded, even if you delete and recreate the application, so pull the new image
+explicitly. Over SSH, this pulls it and replaces the container in one go:
+
+```bash
+DIR=$(docker inspect solar-dashboard --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}')
+cd "$DIR" && docker compose pull && docker compose up -d
+```
+
+(Older Container Station versions use `docker-compose` instead of `docker compose`.) Your data folder
+is kept. To update automatically, run the same command from cron, e.g. nightly.
 
 ### NAS notes
 
