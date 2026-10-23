@@ -121,6 +121,9 @@ func TestSignatureMatchAndClusterKey(t *testing.T) {
 		{sig(74, 0, 0), sig(112, 0, 0), false, "74 vs 112 W (was matched by the old 60 W tolerance)"},
 		{sig(74, 0, 0), sig(14, 0, 0), false, "74 vs 14 W"},
 		{sig(344, 0, 0.4), sig(348, 0, 1.0), false, "printer warm-up (mixed) vs furnace motor of equal power"},
+		{sig(344, 0, 0.59), sig(348, 0, 0.83), false, "the real printer warm-up vs furnace motor (ratios 0.59 / 0.83)"},
+		{sig(74, 0, 0.21), sig(70, 0, 0.45), true, "small loads: noisier reactive power, more room"},
+		{sig(1500, 1500, 0.02), sig(1500, 1500, 0.08), true, "large resistive load, small ratio noise"},
 		{sig(400, 0, 0.02), sig(410, 0, 0.1), true, "two resistive readings"},
 	}
 	for _, c := range cases {

@@ -16,13 +16,16 @@ import (
 )
 
 const (
-	activityGap      = 20 * time.Minute // repeats of one signature closer than this are one activity
-	clusterDays      = 7                // unnamed runs from this many days are clustered
-	matchTolPct      = 0.15             // signatures match within 15% per leg...
-	matchTolW        = 25.0             // ...or 25 W, whichever is larger,
-	matchTolRatio    = 0.25             // and reactive/real power ratios within 0.25 (character)
-	minClusterRuns   = 1                // show signatures for naming from their first run
-	maxClusters      = 40               // most energy first
+	activityGap = 20 * time.Minute // repeats of one signature closer than this are one activity
+	clusterDays = 7                // unnamed runs from this many days are clustered
+	matchTolPct = 0.15             // signatures match within 15% per leg...
+	matchTolW   = 25.0             // ...or 25 W, whichever is larger,
+	// Reactive/real power ratios (character) must agree within matchTolRatio + matchTolRatioW/P:
+	// small loads are measured less precisely, so they get more room.
+	matchTolRatio    = 0.10
+	matchTolRatioW   = 15.0
+	minClusterRuns   = 1  // show signatures for naming from their first run
+	maxClusters      = 40 // most energy first
 	appliancesFile   = "appliances.json"
 	maxRunsPerDayMem = 50_000
 )
@@ -154,7 +157,8 @@ func sameSignature(a, b Sig) bool {
 	if pa <= 0 || pb <= 0 {
 		return true
 	}
-	return math.Abs(math.Abs(qa/pa)-math.Abs(qb/pb)) <= matchTolRatio
+	tol := matchTolRatio + matchTolRatioW/math.Min(pa, pb)
+	return math.Abs(math.Abs(qa/pa)-math.Abs(qb/pb)) <= tol
 }
 
 // ---------- storage ----------
