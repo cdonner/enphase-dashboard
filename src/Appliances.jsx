@@ -543,8 +543,8 @@ export default function Appliances() {
         <section className="card">
           <h2>Needs a name</h2>
           <p className="muted small">
-            Signatures that repeated over the last 7 days, most energy first. Naming one labels all of its runs, past
-            and future.
+            Signatures from the last 7 days, most energy first. Naming one labels all of its runs, past and future. Give
+            several signatures the same name to group them into one appliance.
           </p>
           {lists.data && (
             <AskAI providers={lists.data.aiProviders} household={lists.data.household} onChanged={reload} />

@@ -356,8 +356,11 @@ Steps up and down are paired into runs. Run times show on a timeline for each da
 runs of the same appliance are grouped. If an appliance switches off in stages, such as a sauna heater
 turning off one element at a time, each stage is split off its run.
 
-**Naming appliances.** *Needs a name* lists signatures that repeated over the last 7 days, most
-energy first, so you can name them in batches. Each shows how often it ran, for how long, example
+**Naming appliances.** *Needs a name* lists the unnamed signatures of the last 7 days, most energy
+first, so you can name them in batches. You can also click a bar on the timeline and name it there.
+Many appliances have several signatures (a laser printer's warm-up, fuser and paper motor; a dryer's
+element and drum motor; each stage of a sauna heater). Give them the same name and they become one
+appliance with one timeline row; the name field suggests the names you've already used. Each shows how often it ran, for how long, example
 times, and up to three suggestions from a built-in catalog of common appliances (water heater,
 dryer, oven, AC/heat pump, well pump, microwave, kettle, laser printer, furnace blower, ...). Click a
 suggestion or type a name. The name then applies to all past and future runs with that signature.
