@@ -3,6 +3,7 @@ import { usePoll } from './api.js';
 import AuthPanel from './AuthPanel.jsx';
 import EvCard from './EvCard.jsx';
 import ThemeToggle from './ThemeToggle.jsx';
+import Appliances from './Appliances.jsx';
 import { DailyChart, DailyTable, InverterChart, InverterTable, Legend, PowerChart, PowerTable } from './charts.jsx';
 import { fmtAgo, fmtExpiry, fmtTime, fmtW, fmtWh } from './format.js';
 
@@ -47,6 +48,15 @@ export default function App() {
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Tabs live in the URL hash so they can be bookmarked.
+  const tabFromHash = () => (window.location.hash === '#appliances' ? 'appliances' : 'overview');
+  const [tab, setTab] = useState(tabFromHash);
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   const st = status.data;
@@ -110,6 +120,26 @@ export default function App() {
       {(!authed || showAuth) && <AuthPanel status={st} onDone={onAuthDone} onClose={authed ? () => setShowAuth(false) : null} />}
 
       {authed && (
+        <nav className="tabs page-tabs" role="tablist">
+          {[
+            ['overview', 'Overview'],
+            ['appliances', 'Appliances'],
+          ].map(([key, name]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => (window.location.hash = key === 'overview' ? '' : key)}
+            >
+              {name}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {authed && tab === 'appliances' && <Appliances />}
+
+      {authed && tab === 'overview' && (
         <>
           <section className="overview">
             <div className="card hero">

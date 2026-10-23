@@ -9,6 +9,7 @@ local network, and can optionally use the **Enphase cloud API** to fill in histo
 - Output for each microinverter
 - EV charger sessions: energy, range added, how much came from solar, and the value at your electricity rates
 - Gateway token creation and renewal built in (Enlighten sign-in, or paste a token)
+- Appliance detection: finds larger appliances switching on and off in the second-by-second data, with suggestions for naming them
 - Light and dark mode (automatic, or chosen with the theme button), works on phones, and every chart has a table view
 
 Not affiliated with or endorsed by Enphase Energy.
@@ -222,7 +223,7 @@ to the Go server.
 | `PORT` | `3001` | |
 | `HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Interface to listen on |
 | `DATA_DIR` | `./data` (`/app/data` in Docker) | Where tokens and history are stored |
-| `POLL_MS` | `5000` | Gateway polling interval |
+| `POLL_MS` | `1000` | Gateway polling interval; appliance detection needs 1-second readings |
 | `DASHBOARD_PASSWORD` | – | If set, the dashboard asks for this password (HTTP basic auth, any username) |
 | `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, `ENPHASE_CLIENT_SECRET` | – | Enables the [Enphase cloud](#enphase-cloud-optional) features |
 
@@ -320,6 +321,40 @@ curl -X PUT http://<host>:3001/api/settings -H 'Content-Type: application/json' 
 average. `rates` holds monthly rates, e.g. `{"2026-09": 0.2305}`. The request replaces all settings,
 so include everything you want to keep. If you set `DASHBOARD_PASSWORD`, add `-u any:<password>`.
 
+## Appliances tab
+
+The **Appliances** tab shows when larger appliances ran, without a meter on each circuit. Every
+second, the dashboard reads the real and reactive power on each leg (phase) from the gateway's
+consumption meter, after subtracting solar so clouds don't count. It then looks for **steps**: a
+jump to a new steady level of at least about 60 W. Each step is described by:
+
+- **size** in watts,
+- **circuit**: both legs together for a 240 V appliance, one leg for 120 V, or 240 V plus extra on one
+  leg (e.g. a dryer: heating element plus motor),
+- **character**: *resistive* (heating elements: water heater, kettle, sauna, oven) or *motor*
+  (compressors, pumps, blowers), from the ratio of reactive to real power.
+
+Steps up and down are paired into runs. Run times show on a timeline for each day, and repeated
+runs of the same appliance are grouped. If an appliance switches off in stages, such as a sauna heater
+turning off one element at a time, each stage is split off its run.
+
+**Naming appliances.** *Needs a name* lists signatures that repeated over the last 7 days, most
+energy first, so you can name them in batches. Each shows how often it ran, for how long, example
+times, and up to three suggestions from a built-in catalog of common appliances (water heater,
+dryer, oven, AC/heat pump, well pump, microwave, kettle, laser printer, furnace blower, ...). Click a
+suggestion or type a name. The name then applies to all past and future runs with that signature.
+To identify one, switch a suspect on or off and watch for the bar on today's timeline.
+
+**Limitations.** This works best for appliances that switch on and off at a fixed power, roughly
+60 W and up. It can't separate:
+
+- loads that vary gradually (computers, TVs, variable-speed heat pumps and pumps while ramping),
+- two similar appliances on the same leg (a kettle and a toaster look the same),
+- appliances that switch within the same second as another.
+
+Steady loads like servers and network gear simply form the base load. The gateway is polled every
+second for this (`POLL_MS`); only detected runs are stored, about 100 bytes each.
+
 ## Data and security
 
 Everything is stored in the data directory (`DATA_DIR`):
@@ -330,7 +365,8 @@ Everything is stored in the data directory (`DATA_DIR`):
 | `credentials.json` | Enlighten login, only if *Remember credentials* was ticked (mode 600) |
 | `cloud.json` | Enphase cloud OAuth tokens (mode 600) |
 | `settings.json`, `rates.csv` | Electricity rates (`rates.csv` is optional, see [Rate file](#rate-file)) |
-| `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/` | Recorded data |
+| `appliances.json` | Appliance names and signatures |
+| `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/`, `events/` | Recorded data |
 
 Tokens and passwords never reach the browser. The dashboard has no user accounts, though, so
 anyone who can reach it can view your data and change the gateway token. Set `DASHBOARD_PASSWORD`
@@ -339,7 +375,8 @@ when it listens on anything other than localhost, and don't expose it to the int
 ## API
 
 The server's JSON endpoints, which you can use in your own scripts: `/api/status`, `/api/live`,
-`/api/today`, `/api/daily?days=N`, `/api/inverters`, `/api/ev`, and `/api/settings` (GET and PUT).
+`/api/today`, `/api/daily?days=N`, `/api/inverters`, `/api/ev`, `/api/appliances` and
+`/api/appliances/day?date=YYYY-MM-DD`, and `/api/settings` (GET and PUT).
 
 ## License
 

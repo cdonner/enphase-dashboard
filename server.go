@@ -82,7 +82,15 @@ type Server struct {
 	evDays      map[string]*EvDay // "serial/date" -> cached day series
 	settings    Settings
 	rates       rateFile // cached rates.csv
-	inverters   struct {
+	detector    *Detector
+	lastReading int64 // gateway timestamp of the last reading fed to the detector
+	events      struct {
+		date  string
+		runs  []Run
+		dirty bool
+	}
+	appliances []Appliance
+	inverters  struct {
 		at   int64
 		data json.RawMessage
 	}
@@ -104,6 +112,8 @@ func NewServer(cfg Config) *Server {
 		ev:         EvState{Chargers: []EvCharger{}},
 		evDays:     map[string]*EvDay{},
 		settings:   Settings{Rates: map[string]float64{}},
+		detector:   NewDetector(),
+		appliances: []Appliance{},
 	}
 	s.cloud = NewCloud(s)
 	return s
@@ -147,6 +157,10 @@ func (s *Server) start() {
 	}
 	s.readJSON("ev.json", &s.ev)
 	s.readJSON("settings.json", &s.settings)
+	s.readJSON(appliancesFile, &s.appliances)
+	if s.appliances == nil {
+		s.appliances = []Appliance{}
+	}
 	if s.settings.Rates == nil {
 		s.settings.Rates = map[string]float64{}
 	}
@@ -470,9 +484,15 @@ func (s *Server) sampleOnce() error {
 	}
 	var readings []struct {
 		EID           int64   `json:"eid"`
+		Timestamp     int64   `json:"timestamp"`
 		ActivePower   float64 `json:"activePower"`
 		ActEnergyDlvd float64 `json:"actEnergyDlvd"`
 		ActEnergyRcvd float64 `json:"actEnergyRcvd"`
+		Channels      []struct {
+			ActivePower   float64 `json:"activePower"`
+			ReactivePower float64 `json:"reactivePower"`
+			Voltage       float64 `json:"voltage"`
+		} `json:"channels"`
 	}
 	if err := s.gatewayJSON("/ivp/meters/readings", 10*time.Second, &readings); err != nil {
 		return err
@@ -480,16 +500,41 @@ func (s *Server) sampleOnce() error {
 
 	smp := &Sample{At: nowMs()}
 	foundProd := false
+	// Per-leg consumption (net + production) for appliance detection.
+	var legP, legQ []float64
+	var readingTs int64
+	addLegs := func(chans []struct {
+		ActivePower   float64 `json:"activePower"`
+		ReactivePower float64 `json:"reactivePower"`
+		Voltage       float64 `json:"voltage"`
+	}) {
+		var n int
+		for _, c := range chans {
+			if c.Voltage > 0 {
+				n++
+			}
+		}
+		if legP == nil {
+			legP, legQ = make([]float64, n), make([]float64, n)
+		}
+		for i := 0; i < n && i < len(legP); i++ {
+			legP[i] += chans[i].ActivePower
+			legQ[i] += chans[i].ReactivePower
+		}
+	}
 	for _, r := range readings {
 		switch meters[r.EID] {
 		case "production":
 			foundProd = true
 			smp.ProductionW = math.Max(0, r.ActivePower)
 			smp.counters.Produced = ptr(r.ActEnergyDlvd)
+			addLegs(r.Channels)
 		case "net-consumption":
 			smp.NetW = ptr(r.ActivePower)
 			smp.counters.Imported = ptr(r.ActEnergyDlvd)
 			smp.counters.Exported = ptr(r.ActEnergyRcvd)
+			addLegs(r.Channels)
+			readingTs = r.Timestamp
 		}
 	}
 	if !foundProd {
@@ -502,6 +547,13 @@ func (s *Server) sampleOnce() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.meters, s.pdm = meters, pdm
+	if smp.NetW != nil && len(legP) > 0 && readingTs > s.lastReading {
+		s.lastReading = readingTs
+		s.detector.Add(readingTs*1000, legP, legQ)
+		if closed := s.detector.drainClosed(); len(closed) > 0 {
+			s.recordRuns(closed)
+		}
+	}
 	s.record(smp)
 	s.live = smp
 	s.lastError = nil
@@ -584,6 +636,7 @@ func (s *Server) record(smp *Sample) {
 		if err := s.writeJSON("daily.json", s.daily, 0o644); err != nil {
 			s.logf("Saving daily totals: %v", err)
 		}
+		s.persistEvents()
 	}
 }
 

@@ -77,7 +77,7 @@ func loadDotEnv() {
 func loadConfig() Config {
 	loadDotEnv()
 	port, _ := strconv.Atoi(env("PORT", "3001"))
-	pollMs, _ := strconv.Atoi(env("POLL_MS", "5000"))
+	pollMs, _ := strconv.Atoi(env("POLL_MS", "1000"))
 	dataDir, _ := filepath.Abs(env("DATA_DIR", "data"))
 	return Config{
 		DataDir:           dataDir,

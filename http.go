@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -202,6 +203,108 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		}
 		writeJSONResponse(w, 200, map[string]any{"at": s.ev.At, "chargers": chargers, "settings": s.settings, "rates": rates.info})
 	}))
+
+	// Appliance activity for a day (default today), from the 1-second event detector.
+	mux.HandleFunc("GET /api/appliances/day", authed(func(w http.ResponseWriter, r *http.Request) {
+		date := r.URL.Query().Get("date")
+		if date == "" {
+			date = dayKey(time.Now())
+		}
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			writeErr(w, 400, errors.New("date must be YYYY-MM-DD"))
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		var open []Run
+		if date == dayKey(time.Now()) {
+			open = s.detector.open
+		}
+		runs := s.loadDayRuns(date)
+		legs := len(s.detector.legs)
+		if legs == 0 && len(runs) > 0 {
+			legs = len(runs[0].DP)
+		}
+		writeJSONResponse(w, 200, map[string]any{
+			"date":       date,
+			"legs":       legs,
+			"runs":       len(runs),
+			"activities": s.activities(runs, open, nowMs()),
+		})
+	}))
+
+	// Unnamed signatures of the last week, for naming in batches, plus the named ones.
+	mux.HandleFunc("GET /api/appliances", authed(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		type named struct {
+			Appliance
+			Signature Signature `json:"signature"`
+		}
+		list := []named{}
+		for _, a := range s.appliances {
+			list = append(list, named{a, describe(a.DP, a.DQ)})
+		}
+		writeJSONResponse(w, 200, map[string]any{"appliances": list, "unnamed": s.clusters()})
+	}))
+
+	mux.HandleFunc("POST /api/appliances", func(w http.ResponseWriter, r *http.Request) {
+		var a Appliance
+		if err := json.NewDecoder(r.Body).Decode(&a); err != nil || strings.TrimSpace(a.Name) == "" || len(a.DP) == 0 || len(a.DQ) != len(a.DP) {
+			writeErr(w, 400, errors.New("name, dp and dq are required"))
+			return
+		}
+		a.ID, a.Name = newID(), strings.TrimSpace(a.Name)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.appliances = append(s.appliances, a)
+		if err := s.saveAppliances(); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSONResponse(w, 200, a)
+	})
+
+	mux.HandleFunc("PUT /api/appliances/{id}", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Name string `json:"name"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Name) == "" {
+			writeErr(w, 400, errors.New("name is required"))
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i := range s.appliances {
+			if s.appliances[i].ID == r.PathValue("id") {
+				s.appliances[i].Name = strings.TrimSpace(body.Name)
+				if err := s.saveAppliances(); err != nil {
+					writeErr(w, 500, err)
+					return
+				}
+				writeJSONResponse(w, 200, s.appliances[i])
+				return
+			}
+		}
+		writeErr(w, 404, errors.New("no such appliance"))
+	})
+
+	mux.HandleFunc("DELETE /api/appliances/{id}", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i := range s.appliances {
+			if s.appliances[i].ID == r.PathValue("id") {
+				s.appliances = append(s.appliances[:i], s.appliances[i+1:]...)
+				if err := s.saveAppliances(); err != nil {
+					writeErr(w, 500, err)
+					return
+				}
+				writeJSONResponse(w, 200, map[string]bool{"ok": true})
+				return
+			}
+		}
+		writeErr(w, 404, errors.New("no such appliance"))
+	})
 
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()

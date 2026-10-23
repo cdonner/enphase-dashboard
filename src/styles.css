@@ -180,3 +180,36 @@ a { color: var(--accent); }
   .ev-tiles .tile-value { font-size: 18px; }
 }
 .rates label.check { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; margin-right: 12px; }
+
+/* tabs */
+.page-tabs { margin: 0; }
+.page-tabs button { font-size: 15px; }
+
+/* appliance view */
+:root { --series-3: #1baf7a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) { --series-3: #199e70; } }
+:root[data-theme='dark'] { --series-3: #199e70; }
+.day-nav { align-items: center; }
+.day-nav span { min-width: 110px; text-align: center; font-size: 14px; }
+.timeline { margin-top: 12px; display: grid; gap: 4px; }
+.tl-axis { position: relative; height: 16px; margin-left: 200px; font-size: 11px; color: var(--text-muted); }
+.tl-axis span { position: absolute; transform: translateX(-50%); }
+.tl-axis span:first-child { transform: none; }
+.tl-row { display: grid; grid-template-columns: 200px 1fr; align-items: center; gap: 8px; min-height: 22px; }
+.tl-label { display: flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tl-track { position: relative; height: 14px; background: var(--hover); border-radius: 3px;
+  background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px); background-size: 25% 100%; }
+.tl-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 2px; cursor: pointer; }
+.tl-bar:hover, .tl-bar:focus-visible { outline: 2px solid var(--text-primary); outline-offset: 1px; z-index: 1; }
+.tl-hover { min-height: 20px; font-size: 13px; margin-top: 4px; }
+.clusters { display: grid; gap: 10px; margin-top: 8px; }
+.cluster { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 4px; }
+.cluster-head { display: flex; gap: 8px; align-items: center; }
+.suggestions { align-items: center; gap: 6px; }
+button.chip { padding: 2px 10px; border-radius: 999px; font-size: 13px; }
+.name-form input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); }
+.known td { vertical-align: middle; }
+@media (max-width: 600px) {
+  .tl-axis { margin-left: 110px; }
+  .tl-row { grid-template-columns: 110px 1fr; }
+}
