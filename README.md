@@ -107,16 +107,24 @@ credentials is fine, because it only polls the gateway.
 ### 4. Updating
 
 Every push to `main` publishes a new `latest` image. NAS container apps usually keep using the copy
-they already downloaded, even if you delete and recreate the application, so pull the new image
-explicitly. Over SSH, this pulls it and replaces the container in one go:
+they already downloaded, even if you delete and recreate the application, so the image has to be
+pulled explicitly. The update script does that and recreates the container from its compose file,
+keeping your settings and data. Install it once over SSH, e.g. next to the data folder:
 
 ```bash
-DIR=$(docker inspect solar-dashboard --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}')
-cd "$DIR" && docker compose pull && docker compose up -d
+cd /share/Container/solar-dashboard      # Synology: /volume1/docker/solar-dashboard
+curl -fsSL -o update.sh https://raw.githubusercontent.com/cdonner/enphase-dashboard/main/scripts/update-docker.sh
 ```
 
-(Older Container Station versions use `docker-compose` instead of `docker compose`.) Your data folder
-is kept. To update automatically, run the same command from cron, e.g. nightly.
+(If `curl` is missing, use `wget -O update.sh <same URL>`.) From then on, updating is:
+
+```bash
+sh /share/Container/solar-dashboard/update.sh
+```
+
+It reports *Already up to date* or recreates the container. If your container isn't called
+`solar-dashboard`, pass its name as an argument. To update automatically, run the same command
+from cron, e.g. nightly. Old image layers pile up over time; `docker image prune -f` removes them.
 
 ### NAS notes
 
