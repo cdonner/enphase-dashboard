@@ -79,6 +79,8 @@ type Server struct {
 	cloudDaily  map[string]*CloudDay
 	cloudMeta   CloudMeta
 	ev          EvState
+	evDays      map[string]*EvDay // "serial/date" -> cached day series
+	settings    Settings
 	inverters   struct {
 		at   int64
 		data json.RawMessage
@@ -99,6 +101,8 @@ func NewServer(cfg Config) *Server {
 		daily:      map[string]*Day{},
 		cloudDaily: map[string]*CloudDay{},
 		ev:         EvState{Chargers: []EvCharger{}},
+		evDays:     map[string]*EvDay{},
+		settings:   Settings{Rates: map[string]float64{}},
 	}
 	s.cloud = NewCloud(s)
 	return s
@@ -141,6 +145,10 @@ func (s *Server) start() {
 		s.cloudDaily = cloudDaily.Days
 	}
 	s.readJSON("ev.json", &s.ev)
+	s.readJSON("settings.json", &s.settings)
+	if s.settings.Rates == nil {
+		s.settings.Rates = map[string]float64{}
+	}
 	s.rollDay(dayKey(time.Now()))
 	hasToken, days := s.token != "", len(s.daily)
 	s.mu.Unlock()
@@ -737,8 +745,119 @@ func (s *Server) cloudTick() {
 	if err == nil {
 		err = s.syncEv()
 	}
+	if err == nil {
+		err = s.syncEvDays()
+	}
 	s.cloud.setError(err)
 	if err != nil {
 		s.logf("Cloud sync: %v", err)
 	}
+}
+
+// ---------- EV cost: solar/grid split ----------
+
+const evDaysPerTick = 8 // backfill a few days per cloud tick (3 calls each)
+
+// evDay returns the cached series for serial/date, loading it from disk if needed.
+// Caller holds s.mu.
+func (s *Server) evDay(serial, date string) *EvDay {
+	key := serial + "/" + date
+	if d, ok := s.evDays[key]; ok {
+		return d
+	}
+	var d EvDay
+	if !s.readJSON("ev-days/"+key+".json", &d) {
+		return nil
+	}
+	s.evDays[key] = &d
+	return &d
+}
+
+// syncEvDays fetches the 15-minute series for completed days that have charging sessions.
+func (s *Server) syncEvDays() error {
+	today := dayKey(time.Now())
+	type want struct{ serial, date string }
+	var missing []want
+	seen := map[string]bool{}
+	s.mu.Lock()
+	for _, c := range s.ev.Chargers {
+		for _, sess := range c.Sessions {
+			if sess.End == nil {
+				continue
+			}
+			for t := startOfDay(time.UnixMilli(sess.Start)); !t.After(time.UnixMilli(*sess.End)); t = t.AddDate(0, 0, 1) {
+				date := dayKey(t)
+				key := c.Serial + "/" + date
+				if date >= today || seen[key] {
+					continue
+				}
+				seen[key] = true
+				if s.evDay(c.Serial, date) == nil {
+					missing = append(missing, want{c.Serial, date})
+				}
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	for i, w := range missing {
+		if i == evDaysPerTick {
+			break
+		}
+		t, _ := time.ParseInLocation("2006-01-02", w.date, time.Local)
+		day, err := s.cloud.evDay(w.serial, t.Unix())
+		if err != nil {
+			return err
+		}
+		if err := s.writeJSON("ev-days/"+w.serial+"/"+w.date+".json", day, 0o644); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		s.evDays[w.serial+"/"+w.date] = day
+		s.mu.Unlock()
+	}
+	return nil
+}
+
+type EvSessionView struct {
+	EvSession
+	SolarKwh    *float64 `json:"solarKwh"`
+	EnphaseCost *float64 `json:"enphaseCost"`
+	CostSource  string   `json:"costSource"` // "rates": kWh × your monthly rate; "enphase": Enphase's figure
+}
+
+// sessionView prices a session at the normal grid rate for its month (what it would
+// cost without solar) and, once the 15-minute series are cached, works out how much of
+// it solar supplied: per interval, in proportion to how much of the household's
+// consumption solar covered. Caller holds s.mu.
+func (s *Server) sessionView(serial string, sess EvSession) EvSessionView {
+	v := EvSessionView{EvSession: sess, EnphaseCost: sess.Cost, CostSource: "enphase"}
+	if sess.Kwh == nil {
+		return v
+	}
+	if rate := s.settings.rateFor(time.UnixMilli(sess.Start).Format("2006-01")); rate != nil {
+		v.Cost = ptr(math.Round(*sess.Kwh**rate*100) / 100)
+		v.CostSource = "rates"
+	}
+	if sess.End == nil || *sess.Kwh <= 0 {
+		return v
+	}
+	start, end := sess.Start/1000, *sess.End/1000
+	var evWh, solarWh float64
+	for e := (start/900 + 1) * 900; e-900 < end; e += 900 {
+		day := s.evDay(serial, dayKey(time.Unix(e-1, 0)))
+		if day == nil {
+			return v // series not fetched yet
+		}
+		ev := day.EV[e]
+		if ev <= 0 {
+			continue
+		}
+		evWh += ev
+		solarWh += ev * math.Min(1, day.Prod[e]/math.Max(day.Cons[e], ev)) // solar share of this interval's load
+	}
+	if evWh > 0 {
+		v.SolarKwh = ptr(*sess.Kwh * solarWh / evWh)
+	}
+	return v
 }

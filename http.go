@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"path"
@@ -186,8 +187,51 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/ev", authed(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		writeJSONResponse(w, 200, s.ev)
+		type chargerView struct {
+			EvCharger
+			Sessions []EvSessionView `json:"sessions"`
+		}
+		chargers := []chargerView{}
+		for _, c := range s.ev.Chargers {
+			cv := chargerView{EvCharger: c, Sessions: []EvSessionView{}}
+			for _, sess := range c.Sessions {
+				cv.Sessions = append(cv.Sessions, s.sessionView(c.Serial, sess))
+			}
+			chargers = append(chargers, cv)
+		}
+		writeJSONResponse(w, 200, map[string]any{"at": s.ev.At, "chargers": chargers, "settings": s.settings})
 	}))
+
+	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		writeJSONResponse(w, 200, s.settings)
+	})
+
+	mux.HandleFunc("PUT /api/settings", func(w http.ResponseWriter, r *http.Request) {
+		var st Settings
+		if err := json.NewDecoder(r.Body).Decode(&st); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if st.Rates == nil {
+			st.Rates = map[string]float64{}
+		}
+		for m, rate := range st.Rates {
+			if _, err := time.Parse("2006-01", m); err != nil || rate < 0 || rate > 5 {
+				writeErr(w, 400, fmt.Errorf("invalid rate %q: %v", m, rate))
+				return
+			}
+		}
+		if err := s.writeJSON("settings.json", st, 0o644); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		s.mu.Lock()
+		s.settings = st
+		s.mu.Unlock()
+		writeJSONResponse(w, 200, st)
+	})
 
 	mux.HandleFunc("GET /api/inverters", authed(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()

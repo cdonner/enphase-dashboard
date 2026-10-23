@@ -330,13 +330,30 @@ func flatIntervals(raw json.RawMessage) []map[string]json.Number {
 	return out
 }
 
+// series fetches one 15-minute telemetry series for the day starting at startAt (unix
+// seconds) as end_at -> value. listKey names the array in the response, field the value. 1 call.
+func (c *Cloud) series(path, listKey, field string, startAt int64) (map[int64]float64, error) {
+	var body map[string]json.RawMessage
+	if err := c.get(fmt.Sprintf("%s?start_at=%d&granularity=day", path, startAt), &body); err != nil {
+		return nil, err
+	}
+	out := map[int64]float64{}
+	for _, m := range flatIntervals(body[listKey]) {
+		end, err1 := m["end_at"].Int64()
+		v, err2 := m[field].Float64()
+		if err1 == nil && err2 == nil {
+			out[end] = v
+		}
+	}
+	return out, nil
+}
+
 // intervals returns 15-minute intervals (Wh) since startAt (unix seconds), oldest first. 4 calls.
 func (c *Cloud) intervals(startAt int64) ([]Interval, error) {
 	id, err := c.systemID()
 	if err != nil {
 		return nil, err
 	}
-	q := fmt.Sprintf("?start_at=%d&granularity=day", startAt)
 	byEnd := map[int64]*Interval{}
 	for _, r := range []struct {
 		path, field string
@@ -347,27 +364,17 @@ func (c *Cloud) intervals(startAt int64) ([]Interval, error) {
 		{"energy_import_telemetry", "wh_imported", func(i *Interval) **float64 { return &i.Imported }},
 		{"energy_export_telemetry", "wh_exported", func(i *Interval) **float64 { return &i.Exported }},
 	} {
-		var body struct {
-			Intervals json.RawMessage `json:"intervals"`
-		}
-		if err := c.get(fmt.Sprintf("/systems/%d/%s%s", id, r.path, q), &body); err != nil {
+		vals, err := c.series(fmt.Sprintf("/systems/%d/%s", id, r.path), "intervals", r.field, startAt)
+		if err != nil {
 			return nil, err
 		}
-		for _, m := range flatIntervals(body.Intervals) {
-			end, err := m["end_at"].Int64()
-			if err != nil {
-				continue
-			}
+		for end, v := range vals {
 			row := byEnd[end]
 			if row == nil {
 				row = &Interval{End: end}
 				byEnd[end] = row
 			}
-			if n, ok := m[r.field]; ok {
-				if f, err := n.Float64(); err == nil {
-					*r.dst(row) = ptr(f)
-				}
-			}
+			*r.dst(row) = ptr(v)
 		}
 	}
 	out := make([]Interval, 0, len(byEnd))
@@ -377,6 +384,30 @@ func (c *Cloud) intervals(startAt int64) ([]Interval, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].End < out[j].End })
 	c.markSynced()
 	return out, nil
+}
+
+// evDay fetches one day's 15-minute charger draw, solar production and household
+// consumption (Wh, keyed by interval end) for splitting sessions into solar and grid. 3 calls.
+func (c *Cloud) evDay(serial string, startAt int64) (*EvDay, error) {
+	id, err := c.systemID()
+	if err != nil {
+		return nil, err
+	}
+	day := &EvDay{}
+	for _, r := range []struct {
+		path, listKey, field string
+		dst                  *map[int64]float64
+	}{
+		{fmt.Sprintf("/systems/%d/ev_charger/%s/telemetry", id, url.PathEscape(serial)), "consumption", "consumption", &day.EV},
+		{fmt.Sprintf("/systems/%d/telemetry/production_meter", id), "intervals", "wh_del", &day.Prod},
+		{fmt.Sprintf("/systems/%d/telemetry/consumption_meter", id), "intervals", "enwh", &day.Cons},
+	} {
+		if *r.dst, err = c.series(r.path, r.listKey, r.field, startAt); err != nil {
+			return nil, err
+		}
+	}
+	c.markSynced()
+	return day, nil
 }
 
 // evChargers lists the system's EV chargers (IQ EV Charger reports to the cloud only). 1 call.

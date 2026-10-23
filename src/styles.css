@@ -160,3 +160,13 @@ g[tabindex]:focus-visible .hit, g[tabindex]:focus-visible .hover-band { fill: va
 .auth .row input { flex: 1; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); }
 a { color: var(--accent); }
 .ev-tiles { margin: 12px 0; }
+.rates { display: grid; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0 12px; }
+.rates-rows { display: grid; gap: 6px; max-height: 320px; overflow-y: auto; }
+.rates .row { align-items: center; }
+.rates input, .rates select {
+  font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--page); color: var(--text-primary);
+}
+.rate-input { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
+.rate-input input { width: 100px; }
+.card-head .row { align-items: center; }

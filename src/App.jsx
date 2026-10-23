@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { usePoll } from './api.js';
 import AuthPanel from './AuthPanel.jsx';
 import EvCard from './EvCard.jsx';
+import ThemeToggle from './ThemeToggle.jsx';
 import { DailyChart, DailyTable, InverterChart, InverterTable, Legend, PowerChart, PowerTable } from './charts.jsx';
 import { fmtAgo, fmtExpiry, fmtTime, fmtW, fmtWh } from './format.js';
 
@@ -102,6 +103,7 @@ export default function App() {
               Token · {fmtExpiry(st.token.expiresAt, now)}
             </button>
           )}
+          <ThemeToggle />
         </div>
       </header>
 
@@ -165,7 +167,7 @@ export default function App() {
             </Card>
           </div>
 
-          <EvCard ev={ev.data} now={now} />
+          <EvCard ev={ev.data} now={now} onSettingsSaved={ev.reload} />
         </>
       )}
     </main>

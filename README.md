@@ -7,9 +7,9 @@ local network, and can optionally use the **Enphase cloud API** to fill in histo
 - Live production, consumption, and grid import/export (5-second updates)
 - Today's power curve and daily energy totals for the last 14 days
 - Output for each microinverter
-- EV charger sessions: energy, range added, and cost
+- EV charger sessions: energy, range added, how much came from solar, and the value at your electricity rates
 - Gateway token creation and renewal built in (Enlighten sign-in, or paste a token)
-- Light and dark mode, works on phones, and every chart has a table view
+- Light and dark mode (automatic, or chosen with the theme button), works on phones, and every chart has a table view
 
 Not affiliated with or endorsed by Enphase Energy.
 
@@ -172,7 +172,12 @@ report on the EV charger. With a free Enphase developer account the dashboard ca
 
 - fill in the part of today before the dashboard started (15-minute data),
 - show full daily totals for days it wasn't running,
-- show IQ EV Charger sessions.
+- show IQ EV Charger sessions, with the share of each session that came from solar.
+
+In the EV card, **Electricity rates** takes your rate per month from your utility bill. Each session
+is then valued at kWh × that month's rate, i.e. what it would cost at normal rates. Until rates are set,
+the card shows Enphase's own cost figure, which uses the tariff in the Enphase app and counts solar
+as free.
 
 Setup:
 
@@ -182,8 +187,9 @@ Setup:
 3. In the dashboard, open **Token → Cloud backfill**, follow the *Approve access* link, sign in with
    the Enlighten account that owns the system, and paste the code you're shown.
 
-The Watt plan allows about 10 calls per minute and 1,000 per month. The dashboard uses about 300 a
-month: daily totals once a day, today's backfill at most once a day, and EV sessions every 3 hours.
+The Watt plan allows about 10 calls per minute and 1,000 per month. The dashboard uses about 400 a
+month: daily totals once a day, today's backfill at most once a day, EV sessions every 3 hours, and
+3 calls for each day with charging, to work out the solar share.
 Access tokens refresh themselves, provided the server runs at least once a month.
 
 ## Data and security
@@ -195,7 +201,8 @@ Everything is stored in the data directory (`DATA_DIR`):
 | `token.json` | Gateway JWT (mode 600) |
 | `credentials.json` | Enlighten login, only if *Remember credentials* was ticked (mode 600) |
 | `cloud.json` | Enphase cloud OAuth tokens (mode 600) |
-| `daily.json`, `history/`, `cloud-daily.json`, `ev.json` | Recorded data |
+| `settings.json` | Electricity rates |
+| `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/` | Recorded data |
 
 Tokens and passwords never reach the browser. The dashboard has no user accounts, though, so
 anyone who can reach it can view your data and change the gateway token. Set `DASHBOARD_PASSWORD`
