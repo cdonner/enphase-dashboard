@@ -30,7 +30,7 @@ What you need:
 - IQ Gateway firmware 7.x or 8.x with token authentication.
 - Consumption CTs, for consumption and import/export figures. Without them you only get production.
 
-## Quick start (Docker / QNAP / Synology)
+## Quick start (Docker)
 
 1. Copy `compose.yaml` and `.env.example` into a folder, rename `.env.example` to `.env`, and set at
    least `ENVOY_HOST` (the gateway's **IP address**; `envoy.local` usually doesn't resolve inside
@@ -38,12 +38,80 @@ What you need:
 2. Run `docker compose up -d`.
 3. Open `http://<host>:3001`, then create or paste a gateway token (see [Gateway token](#gateway-token)).
 
-**QNAP Container Station:** go to *Applications → Create*, paste `compose.yaml`, and fill in the
-`environment:` values directly. Container Station doesn't read `.env` files. The image is published
-for `amd64`, `arm64` and 32-bit `arm/v7` (e.g. ARM-based QNAP models such as the TS-431X series) at `ghcr.io/cdonner/enphase-dashboard`.
+The image `ghcr.io/cdonner/enphase-dashboard` is published for `amd64`, `arm64` and 32-bit `arm/v7`.
+Docker picks the right one automatically. Data, tokens, and credentials are kept in the `solar-data`
+volume, so back it up if you care about the history.
 
-Data, tokens, and credentials are kept in the `solar-data` volume, so back it up if you care about
-the history.
+## Installing on a NAS
+
+A NAS is a good home for the dashboard: it's always on and on the same network as the gateway. The
+dashboard needs very little (under 100 MB of RAM), so even older ARM models run it fine.
+
+### 1. Create a data folder
+
+Make a folder on a share for the dashboard's data, for example `Container/solar-dashboard/data`.
+On QNAP this folder is `/share/Container/solar-dashboard/data`; on Synology it's
+`/volume1/docker/solar-dashboard/data`. Store the data here rather than in a Docker volume, so you
+can back it up and copy files in and out over SMB.
+
+### 2. Create the container
+
+**QNAP (Container Station):** go to *Applications → Create*, enter a name, and paste the YAML below.
+**Synology (Container Manager):** go to *Project → Create*, choose the folder from step 1's parent as
+the path, and paste the same YAML.
+
+```yaml
+services:
+  solar-dashboard:
+    image: ghcr.io/cdonner/enphase-dashboard:latest
+    container_name: solar-dashboard
+    restart: unless-stopped
+    user: "0:0"                  # lets the container write to the NAS share
+    ports:
+      - "3001:3001"
+    environment:
+      ENVOY_HOST: 192.168.1.50   # your gateway's IP address
+      TZ: America/New_York       # your time zone
+      DASHBOARD_PASSWORD: ""     # recommended: anyone on your network can reach the NAS
+      # Optional Enphase cloud features (see below):
+      # ENPHASE_API_KEY: ""
+      # ENPHASE_CLIENT_ID: ""
+      # ENPHASE_CLIENT_SECRET: ""
+    volumes:
+      - /share/Container/solar-dashboard/data:/app/data   # Synology: /volume1/docker/solar-dashboard/data
+```
+
+Put the values directly in the YAML, because the NAS apps don't read a `.env` file. Then open
+`http://<nas-ip>:3001`.
+
+`user: "0:0"` runs the container as root. That avoids permission errors on NAS shares, which are
+usually not writable by the image's default user (uid 1000). If you'd rather not run it as root,
+remove that line and give uid 1000 write access to the data folder instead.
+
+### 3. Moving from another machine (optional)
+
+If the dashboard has already been running somewhere else, stop it there, then copy the contents of
+its `data/` folder into the NAS data folder before starting the container. That brings over the
+gateway token, the cloud connection, and the recorded history.
+
+Never run two copies against the same Enphase cloud connection at once. Each refresh issues a new
+token and invalidates the previous one, so one of the copies will lose access. A copy without cloud
+credentials is fine, because it only polls the gateway.
+
+### 4. Updating
+
+Every push to `main` publishes a new `latest` image. To update, pull the image again and recreate
+the container: in Container Station, open the application and choose *Recreate* (or *Pull* then
+*Recreate*); in Container Manager, go to *Project → Action → Build*. Your data folder is kept.
+
+### NAS notes
+
+- **Gateway address:** use the IP address. `envoy.local` usually doesn't resolve inside containers.
+  Giving the gateway a fixed address (a DHCP reservation in your router) stops it from moving.
+- **ARM models:** older 32-bit ARM NAS units, such as the QNAP TS-431X series, use the `arm/v7`
+  image. Some older ARM models no longer get Container Station updates; if yours doesn't offer it in
+  App Center, run the image on a Raspberry Pi or another always-on machine instead.
+- **Port in use:** change the left side of the mapping, for example `"8085:3001"`.
 
 ## Quick start (Node)
 
