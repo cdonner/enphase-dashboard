@@ -256,3 +256,45 @@ func TestLabelAndMoveSignature(t *testing.T) {
 		t.Fatalf("after second move: %+v", s.appliances)
 	}
 }
+
+func TestMissedSmallSwitchOffIsClosed(t *testing.T) {
+	d := NewDetector()
+	// A 61 W load switches on at t=10 and off at t=100, but the drop measures only 55 W
+	// (below the 60 W edge threshold), so no off step is detected.
+	feed(d, 0, 200, func(t int) []float64 {
+		p := 300.0
+		switch {
+		case t >= 10 && t < 100:
+			p += 61
+		case t >= 100:
+			p += 6
+		}
+		return []float64{p, 300}
+	}, 0)
+	runs := d.drainClosed()
+	if len(runs) != 1 || len(d.open) != 0 {
+		t.Fatalf("got %d closed, %d open; want the run closed by the consistency check", len(runs), len(d.open))
+	}
+	// The end is detected a little late: small changes are followed gradually.
+	if dur := (*runs[0].End - runs[0].Start) / 1000; dur < 85 || dur > 115 {
+		t.Errorf("duration %d s, want ~90-110", dur)
+	}
+}
+
+func TestLongRunStaysOpenWithOtherLoads(t *testing.T) {
+	d := NewDetector()
+	// A 2 kW load stays on while a 1 kW load turns on and off on the same leg.
+	feed(d, 0, 400, func(t int) []float64 {
+		p := 300.0
+		if t >= 10 {
+			p += 2000
+		}
+		if t >= 100 && t < 200 {
+			p += 1000
+		}
+		return []float64{p, 300}
+	}, 0)
+	if runs := d.drainClosed(); len(runs) != 1 || len(d.open) != 1 || !near(d.open[0].DP[0], 2000, 40) {
+		t.Fatalf("closed %+v, open %+v", runs, d.open)
+	}
+}

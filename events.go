@@ -31,6 +31,7 @@ type Run struct {
 	End   *int64    `json:"end,omitempty"`
 	DP    []float64 `json:"dp"` // W per leg
 	DQ    []float64 `json:"dq"` // var per leg
+	base  []float64 // leg levels just before it switched on (for the consistency check)
 }
 
 func (r Run) power() float64 {
@@ -59,6 +60,8 @@ type legTracker struct {
 type pendingEdge struct {
 	at     int64
 	dp, dq []float64
+	base   []float64 // leg levels before the step
+	moved  []bool    // legs that contributed to the step
 }
 
 type Detector struct {
@@ -88,11 +91,48 @@ func (d *Detector) Add(at int64, p, q []float64) {
 			continue
 		}
 		if d.pending == nil {
-			d.pending = &pendingEdge{at: moveAt, dp: make([]float64, len(p)), dq: make([]float64, len(p))}
+			n := len(p)
+			d.pending = &pendingEdge{at: moveAt, dp: make([]float64, n), dq: make([]float64, n),
+				base: make([]float64, n), moved: make([]bool, n)}
+		}
+		if !d.pending.moved[i] {
+			d.pending.moved[i], d.pending.base[i] = true, l.stableP-dp
 		}
 		d.pending.dp[i] += dp
 		d.pending.dq[i] += dq
 		d.pending.at = min(d.pending.at, moveAt)
+	}
+	if d.pending == nil {
+		d.closeVanished(at)
+	}
+}
+
+// closeVanished closes open runs whose load is no longer there even though no matching
+// off step was seen: every leg the run uses has settled back to (about) the level it had
+// before the run started. This catches switch-offs that were missed, e.g. a 60 W load
+// that drops by slightly less than edgeThreshold.
+func (d *Detector) closeVanished(at int64) {
+	for i := len(d.open) - 1; i >= 0; i-- {
+		r := d.open[i]
+		if len(r.base) != len(d.legs) {
+			continue
+		}
+		gone := true
+		for k, l := range d.legs {
+			if r.DP[k] <= edgeThreshold/2 {
+				continue
+			}
+			if !l.haveStable || l.stableP > r.base[k]+0.4*r.DP[k] {
+				gone = false
+				break
+			}
+		}
+		if gone {
+			end := at
+			r.End = &end
+			d.closed = append(d.closed, r)
+			d.open = append(d.open[:i], d.open[i+1:]...)
+		}
 	}
 }
 
@@ -146,7 +186,15 @@ func (d *Detector) flush() {
 		sum += v
 	}
 	if sum > 0 {
-		d.open = append(d.open, Run{Start: e.at, DP: e.dp, DQ: e.dq})
+		base := make([]float64, len(e.dp))
+		for k, l := range d.legs {
+			if e.moved[k] {
+				base[k] = e.base[k]
+			} else {
+				base[k] = l.stableP
+			}
+		}
+		d.open = append(d.open, Run{Start: e.at, DP: e.dp, DQ: e.dq, base: base})
 		if len(d.open) > maxOpenRuns {
 			d.open = d.open[1:] // never matched an off; forget the oldest
 		}
