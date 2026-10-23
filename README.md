@@ -266,32 +266,59 @@ Access tokens refresh themselves, provided the server runs at least once a month
 ## EV charging value
 
 The EV card values each charging session at **what it would have cost at your normal electricity
-rate**: session kWh × the rate for the month the session started. It also shows how much of each
-session your panels supplied (the *Solar* column), but solar doesn't change the value. Both need the
+rate**: session kWh × rate. It also shows how much of each session your panels supplied (the *Solar*
+column), but solar doesn't change the value. Both need the
 [Enphase cloud](#enphase-cloud-optional) connection, because the charger only reports to the cloud.
 
-To set your rates:
+Click **Electricity rates** in the EV card and choose one of two options.
 
-1. Click **Electricity rates** in the EV card.
-2. Click **Add month**, pick the month, and enter the rate in $/kWh. For the effective rate from a
-   bill, divide the total charges by the kWh billed, e.g. $394.62 / 1,712 kWh = $0.2305.
-3. Add as many months as you like, then click **Save rates**.
+**One blended rate (recommended).** A single $/kWh for all sessions, so there's nothing to keep up to
+date. Either enter it, for example a year of bills divided by the kWh billed, or leave the field
+empty to use the average of your last 12 months of monthly rates (see below).
 
-A month without an entry uses the most recent earlier month's rate, so one entry is enough if your
-rate rarely changes. Months before your first entry use the earliest rate you entered. Until you set
-any rates, the card shows Enphase's own cost figure, marked with `*`. That figure is based on the
-tariff in the Enphase app and counts solar energy as free.
+**Rate per month.** A rate for each month, for example from each utility bill. A session uses the rate
+for the month it started in. A month without an entry uses the most recent earlier month, so one
+entry is enough until your rate changes. Months before your first entry use the earliest rate.
 
-Rates are stored in `settings.json` in the data directory. You can also set them with the API, for
-example from a script that reads your utility bills:
+Until you set any rate, the card shows Enphase's own cost figure, marked with `*`. That figure is
+based on the tariff in the Enphase app and counts solar energy as free.
+
+### Rate file
+
+Instead of typing monthly rates into the page, you can keep them in a file, `rates.csv` in the data
+directory, e.g. exported from the spreadsheet where you track your electricity bills. The dashboard
+re-reads it whenever it changes. Each line is either a rate or a bill:
+
+```csv
+# month,rate
+2026-09,0.2305
+
+# month,kWh,amount   (the rate is amount / kWh)
+Aug-26,1767,407.42
+Jul-26,1901,$437.55
+```
+
+- Months can be written as `2026-09`, `Sep-26` or `Sep-2026`.
+- Tab-separated lines (pasted from a spreadsheet) work too, and a header row is skipped.
+- Lines starting with `#` are ignored.
+
+Months in the file override the same months entered on the page. With bill lines, the blended
+average is weighted by kWh (total amount / total kWh over the 12 most recent months), so it matches
+what you actually paid per kWh. The page shows how many months the file provides, along with any
+line it couldn't read.
+
+### Setting rates with the API
+
+Rates are stored in `settings.json` in the data directory, and can be set from a script:
 
 ```bash
 curl -X PUT http://<host>:3001/api/settings -H 'Content-Type: application/json' \
-  -d '{"rates": {"2026-08": 0.2306, "2026-09": 0.2305}}'
+  -d '{"mode": "blended", "blendedRate": 0.248, "rates": {}}'
 ```
 
-The request replaces all rates, so include every month you want to keep. If you set
-`DASHBOARD_PASSWORD`, add `-u any:<password>`.
+`mode` is `blended` or `monthly`. Leave out `blendedRate` (or set it to `null`) to use the 12-month
+average. `rates` holds monthly rates, e.g. `{"2026-09": 0.2305}`. The request replaces all settings,
+so include everything you want to keep. If you set `DASHBOARD_PASSWORD`, add `-u any:<password>`.
 
 ## Data and security
 
@@ -302,7 +329,7 @@ Everything is stored in the data directory (`DATA_DIR`):
 | `token.json` | Gateway JWT (mode 600) |
 | `credentials.json` | Enlighten login, only if *Remember credentials* was ticked (mode 600) |
 | `cloud.json` | Enphase cloud OAuth tokens (mode 600) |
-| `settings.json` | Electricity rates |
+| `settings.json`, `rates.csv` | Electricity rates (`rates.csv` is optional, see [Rate file](#rate-file)) |
 | `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/` | Recorded data |
 
 Tokens and passwords never reach the browser. The dashboard has no user accounts, though, so

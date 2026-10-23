@@ -29,7 +29,12 @@ function totals(sessions, sinceMs) {
 
 const solarPct = (s) => (s.solarKwh == null || !s.kwh ? null : Math.round((s.solarKwh / s.kwh) * 100));
 
-function RatesEditor({ settings, onSaved, onClose }) {
+const fmtRate = (v) => (v == null ? '–' : `$${v.toFixed(4)}/kWh`);
+const fmtMonth = (m) => new Date(`${m}-15T12:00:00`).toLocaleDateString([], { month: 'short', year: 'numeric' });
+
+function RatesEditor({ settings, info, onSaved, onClose }) {
+  const [mode, setMode] = useState(info?.mode ?? 'blended');
+  const [blended, setBlended] = useState(settings?.blendedRate == null ? '' : String(settings.blendedRate));
   const [rows, setRows] = useState(() =>
     Object.entries(settings?.rates ?? {})
       .sort(([a], [b]) => b.localeCompare(a))
@@ -53,7 +58,9 @@ function RatesEditor({ settings, onSaved, onClose }) {
           throw new Error(`Check the row for ${r.month || 'a month'}`);
         rates[r.month] = rate;
       }
-      await api('/settings', { method: 'PUT', body: { rates } });
+      const blendedRate = blended.trim() === '' ? null : Number(blended);
+      if (blendedRate != null && !(blendedRate >= 0)) throw new Error('Check the blended rate');
+      await api('/settings', { method: 'PUT', body: { mode, blendedRate, rates } });
       onSaved();
       onClose();
     } catch (err) {
@@ -63,48 +70,102 @@ function RatesEditor({ settings, onSaved, onClose }) {
     }
   }
 
+  const average = info?.averageRate != null && (
+    <>
+      {fmtRate(info.averageRate)}, the average of {fmtMonth(info.averageFrom)} – {fmtMonth(info.averageTo)}
+    </>
+  );
+
   return (
     <form className="rates" onSubmit={save}>
       <p className="muted small">
-        Your electricity rate per month, from your utility bill. Each session's value is its kWh × the rate for its
-        month; months without an entry use the most recent earlier rate.
+        Each session is valued at its kWh × your electricity rate, i.e. what it would cost at normal rates.
       </p>
-      <div className="rates-rows">
-        {rows.map((r, i) => (
-          <div className="row" key={i}>
+      <div className="row" role="radiogroup" aria-label="Rate type">
+        <label className="check">
+          <input type="radio" name="mode" checked={mode === 'blended'} onChange={() => setMode('blended')} />
+          One blended rate
+        </label>
+        <label className="check">
+          <input type="radio" name="mode" checked={mode === 'monthly'} onChange={() => setMode('monthly')} />
+          Rate per month
+        </label>
+      </div>
+
+      {mode === 'blended' ? (
+        <>
+          <label className="rate-input">
+            $
             <input
-              type="month"
-              value={r.month}
-              onChange={(e) => update(i, 'month', e.target.value)}
-              aria-label="Month"
+              type="number"
+              step="0.0001"
+              min="0"
+              value={blended}
+              placeholder={info?.averageRate != null ? info.averageRate.toFixed(4) : '0.25'}
+              onChange={(e) => setBlended(e.target.value)}
+              aria-label="Blended rate per kWh"
             />
-            <label className="rate-input">
-              $
-              <input
-                type="number"
-                step="0.0001"
-                min="0"
-                value={r.rate}
-                onChange={(e) => update(i, 'rate', e.target.value)}
-                aria-label="Rate per kWh"
-              />
-              /kWh
-            </label>
-            <button type="button" className="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
-              Remove
+            /kWh
+          </label>
+          <p className="muted small">
+            {average ? (
+              <>Leave empty to use {average}.</>
+            ) : (
+              <>For example, a year of electricity bills divided by the kWh billed.</>
+            )}
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="muted small">Months without an entry use the most recent earlier rate.</p>
+          <div className="rates-rows">
+            {rows.map((r, i) => (
+              <div className="row" key={i}>
+                <input
+                  type="month"
+                  value={r.month}
+                  onChange={(e) => update(i, 'month', e.target.value)}
+                  aria-label="Month"
+                />
+                <label className="rate-input">
+                  $
+                  <input
+                    type="number"
+                    step="0.0001"
+                    min="0"
+                    value={r.rate}
+                    onChange={(e) => update(i, 'rate', e.target.value)}
+                    aria-label="Rate per kWh"
+                  />
+                  /kWh
+                </label>
+                <button type="button" className="ghost" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="row">
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => setRows((rs) => [{ month: thisMonth(), rate: '' }, ...rs])}
+            >
+              Add month
             </button>
           </div>
-        ))}
-      </div>
-      <div className="row">
-        <button
-          type="button"
-          className="ghost"
-          onClick={() => setRows((rs) => [{ month: thisMonth(), rate: '' }, ...rs])}
-        >
-          Add month
-        </button>
-      </div>
+        </>
+      )}
+
+      {info?.fileMonths > 0 && (
+        <p className="muted small">
+          rates.csv in the data folder provides {info.fileMonths} months
+          {mode === 'blended'
+            ? ', which feed the average.'
+            : '. For those months they take precedence over this table.'}
+        </p>
+      )}
+      {info?.fileError && <p className="error">rates.csv: {info.fileError}</p>}
       {error && <p className="error">{error}</p>}
       <div className="row">
         <button type="submit" disabled={busy}>
@@ -118,7 +179,13 @@ function RatesEditor({ settings, onSaved, onClose }) {
   );
 }
 
-function Charger({ c, now }) {
+function rateNote(info) {
+  if (!info) return 'at your electricity rates';
+  if (info.mode === 'monthly') return 'at your monthly rates';
+  return `at ${fmtRate(info.blendedRate)}${info.blendedSource === 'average' ? ' (12-month average)' : ''}`;
+}
+
+function Charger({ c, now, info }) {
   const sessions = c.sessions ?? [];
   const week = totals(sessions, now - 7 * DAY);
   const charging = sessions.some((s) => !s.end);
@@ -144,9 +211,7 @@ function Charger({ c, now }) {
         <div className="tile">
           <div className="tile-label">Value, 7 days</div>
           <div className="tile-value">{fmtCost(week.cost)}</div>
-          <div className="tile-sub">
-            {week.fromRates ? 'at your electricity rates' : 'Enphase’s figure; set your rates'}
-          </div>
+          <div className="tile-sub">{week.fromRates ? rateNote(info) : 'Enphase’s figure; set your rates'}</div>
         </div>
       </div>
       <div className="table-scroll">
@@ -203,8 +268,15 @@ export default function EvCard({ ev, now, onSettingsSaved }) {
           </button>
         </div>
       </header>
-      {editing && <RatesEditor settings={ev.settings} onSaved={onSettingsSaved} onClose={() => setEditing(false)} />}
-      <Charger c={c} now={now} />
+      {editing && (
+        <RatesEditor
+          settings={ev.settings}
+          info={ev.rates}
+          onSaved={onSettingsSaved}
+          onClose={() => setEditing(false)}
+        />
+      )}
+      <Charger c={c} now={now} info={ev.rates} />
     </section>
   ));
 }

@@ -147,28 +147,9 @@ type EvDay struct {
 	Cons map[int64]float64 `json:"cons"`
 }
 
-// Settings are user preferences edited in the UI (data/settings.json).
+// Settings are user preferences edited in the UI (data/settings.json). See rates.go.
 type Settings struct {
-	Rates map[string]float64 `json:"rates"` // "YYYY-MM" -> $/kWh from the utility bill
-}
-
-// rateFor returns the rate for month ("YYYY-MM"): that month's, else the most recent
-// earlier one, else the earliest known.
-func (st Settings) rateFor(month string) *float64 {
-	var best, earliest string
-	for m := range st.Rates {
-		if m <= month && m > best {
-			best = m
-		}
-		if earliest == "" || m < earliest {
-			earliest = m
-		}
-	}
-	if best == "" {
-		best = earliest
-	}
-	if best == "" {
-		return nil
-	}
-	return ptr(st.Rates[best])
+	Mode        string             `json:"mode,omitempty"`        // "blended" or "monthly"
+	BlendedRate *float64           `json:"blendedRate,omitempty"` // $/kWh; nil = average of the last 12 months
+	Rates       map[string]float64 `json:"rates"`                 // "YYYY-MM" -> $/kWh
 }

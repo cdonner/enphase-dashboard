@@ -191,15 +191,16 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			EvCharger
 			Sessions []EvSessionView `json:"sessions"`
 		}
+		rates := s.currentRates()
 		chargers := []chargerView{}
 		for _, c := range s.ev.Chargers {
 			cv := chargerView{EvCharger: c, Sessions: []EvSessionView{}}
 			for _, sess := range c.Sessions {
-				cv.Sessions = append(cv.Sessions, s.sessionView(c.Serial, sess))
+				cv.Sessions = append(cv.Sessions, s.sessionView(c.Serial, sess, rates))
 			}
 			chargers = append(chargers, cv)
 		}
-		writeJSONResponse(w, 200, map[string]any{"at": s.ev.At, "chargers": chargers, "settings": s.settings})
+		writeJSONResponse(w, 200, map[string]any{"at": s.ev.At, "chargers": chargers, "settings": s.settings, "rates": rates.info})
 	}))
 
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +223,14 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 				writeErr(w, 400, fmt.Errorf("invalid rate %q: %v", m, rate))
 				return
 			}
+		}
+		if st.Mode != "" && st.Mode != "blended" && st.Mode != "monthly" {
+			writeErr(w, 400, errors.New(`mode must be "blended" or "monthly"`))
+			return
+		}
+		if st.BlendedRate != nil && (*st.BlendedRate < 0 || *st.BlendedRate > 5) {
+			writeErr(w, 400, errors.New("blendedRate must be between 0 and 5 $/kWh"))
+			return
 		}
 		if err := s.writeJSON("settings.json", st, 0o644); err != nil {
 			writeErr(w, 500, err)

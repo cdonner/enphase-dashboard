@@ -81,6 +81,7 @@ type Server struct {
 	ev          EvState
 	evDays      map[string]*EvDay // "serial/date" -> cached day series
 	settings    Settings
+	rates       rateFile // cached rates.csv
 	inverters   struct {
 		at   int64
 		data json.RawMessage
@@ -823,19 +824,19 @@ type EvSessionView struct {
 	EvSession
 	SolarKwh    *float64 `json:"solarKwh"`
 	EnphaseCost *float64 `json:"enphaseCost"`
-	CostSource  string   `json:"costSource"` // "rates": kWh × your monthly rate; "enphase": Enphase's figure
+	CostSource  string   `json:"costSource"` // "rates": kWh × your rate; "enphase": Enphase's figure
 }
 
-// sessionView prices a session at the normal grid rate for its month (what it would
+// sessionView prices a session at your normal electricity rate (what it would
 // cost without solar) and, once the 15-minute series are cached, works out how much of
 // it solar supplied: per interval, in proportion to how much of the household's
 // consumption solar covered. Caller holds s.mu.
-func (s *Server) sessionView(serial string, sess EvSession) EvSessionView {
+func (s *Server) sessionView(serial string, sess EvSession, r rates) EvSessionView {
 	v := EvSessionView{EvSession: sess, EnphaseCost: sess.Cost, CostSource: "enphase"}
 	if sess.Kwh == nil {
 		return v
 	}
-	if rate := s.settings.rateFor(time.UnixMilli(sess.Start).Format("2006-01")); rate != nil {
+	if rate := r.rateFor(time.UnixMilli(sess.Start).Format("2006-01")); rate != nil {
 		v.Cost = ptr(math.Round(*sess.Kwh**rate*100) / 100)
 		v.CostSource = "rates"
 	}
