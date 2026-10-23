@@ -247,7 +247,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			list = append(list, named{a, describe(a.DP, a.DQ)})
 		}
 		writeJSONResponse(w, 200, map[string]any{
-			"appliances": list, "unnamed": s.clusters(), "aiEnabled": aiEnabled(), "aiModel": aiModel(), "household": s.settings.Household,
+			"appliances": list, "unnamed": s.clusters(), "aiProviders": aiProviders(), "household": s.settings.Household,
 		})
 	}))
 
@@ -301,7 +301,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 	}))
 
 	mux.HandleFunc("POST /api/appliances/ask-ai", authed(func(w http.ResponseWriter, r *http.Request) {
-		res, err := s.askAI(r.Context())
+		res, err := s.askAI(r.Context(), r.URL.Query().Get("provider"))
 		if err != nil {
 			writeErr(w, 502, err)
 			return

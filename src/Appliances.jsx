@@ -162,6 +162,7 @@ function Unnamed({ clusters, onChanged }) {
           </div>
           {c.ai?.guesses?.length > 0 && (
             <div className="ai-guesses">
+              <span className="muted small">{c.ai.source === 'gemini' ? 'Gemini' : 'Claude'} suggests:</span>
               {c.ai.guesses.map((g) => (
                 <div key={g.name} className="ai-guess">
                   <button
@@ -222,7 +223,7 @@ function Unnamed({ clusters, onChanged }) {
   );
 }
 
-function AskAI({ enabled, model, household, onChanged }) {
+function AskAI({ providers = [], household, onChanged }) {
   const [text, setText] = useState(household ?? '');
   const [saved, setSaved] = useState(household ?? '');
   const [busy, setBusy] = useState(false);
@@ -260,10 +261,16 @@ function AskAI({ enabled, model, household, onChanged }) {
         setManual(prompt);
       }
     });
-  const askApi = () =>
+  const [asking, setAsking] = useState(null);
+  const askApi = (p) =>
     run(async () => {
-      await api('/appliances/ask-ai', { method: 'POST' });
-      onChanged();
+      setAsking(p.id);
+      try {
+        await api(`/appliances/ask-ai?provider=${p.id}`, { method: 'POST' });
+        onChanged();
+      } finally {
+        setAsking(null);
+      }
     });
 
   return (
@@ -293,15 +300,15 @@ function AskAI({ enabled, model, household, onChanged }) {
         <a className="small" href="https://claude.ai/new" target="_blank" rel="noreferrer">
           Open claude.ai
         </a>
-        {enabled && (
-          <button className="ghost" disabled={busy} onClick={askApi} title={`Uses the Claude API (${model})`}>
-            {busy ? 'Asking…' : 'Ask Claude API'}
+        {providers.map((p) => (
+          <button key={p.id} className="ghost" disabled={busy} onClick={() => askApi(p)} title={`Model: ${p.model}`}>
+            {asking === p.id ? `Asking ${p.name}…` : `Ask ${p.name}`}
           </button>
-        )}
+        ))}
       </div>
       <p className="muted small">
         The prompt holds only summary numbers per signature and the text above, no readings or location.
-        {enabled ? ` "Ask Claude API" shows the answers right here (model ${model}).` : ''}
+        {providers.length ? ' The Ask buttons show the answers right here.' : ''}
       </p>
       {note && <p className="small">{note}</p>}
       {manual && (
@@ -478,12 +485,7 @@ export default function Appliances() {
             and future.
           </p>
           {lists.data && (
-            <AskAI
-              enabled={lists.data.aiEnabled}
-              model={lists.data.aiModel}
-              household={lists.data.household}
-              onChanged={reload}
-            />
+            <AskAI providers={lists.data.aiProviders} household={lists.data.household} onChanged={reload} />
           )}
           <Unnamed clusters={lists.data?.unnamed} onChanged={reload} />
         </section>

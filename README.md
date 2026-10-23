@@ -10,7 +10,7 @@ local network, and can optionally use the **Enphase cloud API** to fill in histo
 - EV charger sessions: energy, range added, how much came from solar, and the value at your electricity rates
 - Gateway token creation and renewal built in (Enlighten sign-in, or paste a token)
 - Appliance detection: finds larger appliances switching on and off in the second-by-second data, with suggestions for naming them
-- AI help for naming detected appliances: a ready-made prompt for any AI chat, or optionally the Claude API
+- AI help for naming detected appliances: a ready-made prompt for any AI chat, or optionally the Claude or Gemini API
 - Home Assistant integration over MQTT, with automatic discovery
 - Light and dark mode (automatic, or chosen with the theme button), works on phones, and every chart has a table view
 
@@ -85,6 +85,7 @@ services:
       # ENPHASE_CLIENT_ID: ""
       # ENPHASE_CLIENT_SECRET: ""
       # ANTHROPIC_API_KEY: ""     # AI suggestions for appliances
+      # GEMINI_API_KEY: ""        # or Gemini (free tier)
       # MQTT_URL: mqtt://192.168.1.20:1883   # Home Assistant
     volumes:
       - /share/Container/solar-dashboard/data:/app/data   # Synology: /volume1/docker/solar-dashboard/data
@@ -232,6 +233,7 @@ to the Go server.
 | `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, `ENPHASE_CLIENT_SECRET` | – | Enables the [Enphase cloud](#enphase-cloud-optional) features |
 | `ANTHROPIC_API_KEY` | – | Enables the Claude API button for [AI suggestions](#ai-suggestions) |
 | `AI_MODEL` | `claude-haiku-5-5` | Claude model for AI suggestions |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | –, newest Flash | Enables the Gemini button for [AI suggestions](#ai-suggestions) |
 | `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD` | – | Enables [Home Assistant](#home-assistant) publishing |
 | `MQTT_TOPIC`, `HA_DISCOVERY_PREFIX` | `enphase_dashboard`, `homeassistant` | MQTT topics |
 
@@ -375,9 +377,9 @@ the size of a sauna heater. There are two ways to ask:
   to each signature by the ID shown on its card, so you can name the right ones. If the browser blocks
   the clipboard (it does on plain `http://` addresses other than localhost), the prompt appears in a
   box to copy by hand.
-- **Ask Claude API** (optional). Appears once an API key is configured, and shows up to three guesses
-  per signature right on its card, each with a confidence level and a one-line reason. Click a guess
-  to use it as the name.
+- **Ask Claude** / **Ask Gemini** (optional). These buttons appear once an API key is configured. They
+  show up to three guesses per signature right on its card, each with a confidence level and a
+  one-line reason. Click a guess to use it as the name.
 
 Either way, the prompt holds only a summary per signature (step size, circuit, character, typical
 run times, repeat interval, starts per hour of day, energy), your household text, and the names of
@@ -390,7 +392,13 @@ Requests are sent only when you click, and use Claude Haiku 5.5 by default: abou
 2-4K output tokens, a fraction of a cent per request. Set `AI_MODEL=claude-opus-5-5` for the most
 capable model, at roughly 5-10 cents per request.
 
-Workload identity federation also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
+**Gemini** has a free tier: create a key at <https://aistudio.google.com> (*Get API key*) in a
+Google Cloud project **without billing enabled**, so it stays free, and set `GEMINI_API_KEY`. On the
+free tier Google may use requests to improve its products; the request contains only the summary
+described above and your household text. The dashboard picks the newest *Flash* model available to
+the key, or set `GEMINI_MODEL`. When the free-tier rate limit is reached, wait a minute and try again.
+
+Workload identity federation for Claude also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
 `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE`
 instead of a key. This needs an identity provider that issues tokens for the machine the dashboard
 runs on (Kubernetes, a cloud VM, CI), so on a home NAS or Pi an API key is the practical choice.

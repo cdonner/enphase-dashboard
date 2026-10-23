@@ -1,8 +1,9 @@
 package main
 
-// Optional AI suggestions for unnamed appliance signatures, using the Claude API
-// (set ANTHROPIC_API_KEY to enable). Only summary numbers per signature and the
-// household description the user wrote are sent; no raw readings or location.
+// AI suggestions for unnamed appliance signatures. The prompt can be copied into any
+// chat app; optionally the Claude API (ANTHROPIC_API_KEY) or Gemini API (GEMINI_API_KEY,
+// gemini.go) answers directly. Only summary numbers per signature and the household
+// description the user wrote are sent; no raw readings or location.
 
 import (
 	"context"
@@ -34,6 +35,7 @@ type AIGuess struct {
 
 type AISuggestion struct {
 	At      int64     `json:"at"`
+	Source  string    `json:"source,omitempty"` // provider that answered
 	Guesses []AIGuess `json:"guesses"`
 }
 
@@ -195,18 +197,71 @@ func (s *Server) chatPrompt() (string, error) {
 		"\nFor each key, list your guesses with confidence and reason. Use the key so I can find the signature on my dashboard.\n", nil
 }
 
-// askAI requests suggestions for the unnamed clusters through the API and stores them.
-func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
-	if !aiEnabled() {
-		return nil, errors.New("set ANTHROPIC_API_KEY (or workload identity federation variables) to enable AI suggestions")
+// AIProvider describes an API that can answer the request directly.
+type AIProvider struct {
+	ID    string `json:"id"` // "claude" or "gemini"
+	Name  string `json:"name"`
+	Model string `json:"model"`
+}
+
+// aiProviders lists the providers with credentials configured.
+func aiProviders() []AIProvider {
+	out := []AIProvider{}
+	if aiEnabled() {
+		out = append(out, AIProvider{"claude", "Claude", aiModel()})
+	}
+	if geminiEnabled() {
+		out = append(out, AIProvider{"gemini", "Gemini", geminiModelSetting()})
+	}
+	return out
+}
+
+// askAI sends the request to a provider and stores the guesses per signature.
+func (s *Server) askAI(ctx context.Context, provider string) (map[string]AISuggestion, error) {
+	ask := map[string]func(context.Context, string) (string, error){"claude": askClaude, "gemini": askGemini}[provider]
+	enabled := map[string]bool{"claude": aiEnabled(), "gemini": geminiEnabled()}[provider]
+	switch {
+	case ask == nil:
+		return nil, fmt.Errorf("unknown AI provider %q", provider)
+	case !enabled && provider == "claude":
+		return nil, errors.New("set ANTHROPIC_API_KEY (or workload identity federation variables) to enable the Claude API")
+	case !enabled:
+		return nil, errors.New("set GEMINI_API_KEY to enable Gemini")
 	}
 	prompt, err := s.aiPrompt()
 	if err != nil {
 		return nil, err
 	}
-
 	ctx, cancel := context.WithTimeout(ctx, aiRequestTimeout)
 	defer cancel()
+	text, err := ask(ctx, prompt)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Signatures []struct {
+			Key     string    `json:"key"`
+			Guesses []AIGuess `json:"guesses"`
+		} `json:"signatures"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &out); err != nil {
+		return nil, fmt.Errorf("unexpected AI response: %v", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := nowMs()
+	for _, sig := range out.Signatures {
+		s.aiSuggestions[sig.Key] = AISuggestion{At: now, Source: provider, Guesses: sig.Guesses}
+	}
+	if err := s.writeJSON(aiFile, s.aiSuggestions, 0o644); err != nil {
+		return nil, err
+	}
+	return s.aiSuggestions, nil
+}
+
+// askClaude sends the request to the Claude API with structured JSON output.
+func askClaude(ctx context.Context, prompt string) (string, error) {
 	model := aiModel()
 	params := anthropic.BetaMessageNewParams{
 		Model:     model,
@@ -231,12 +286,12 @@ func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
 	if err != nil {
 		var apiErr *anthropic.Error
 		if errors.As(err, &apiErr) {
-			return nil, fmt.Errorf("Claude API error %d: %s", apiErr.StatusCode, apiErr.Error())
+			return "", fmt.Errorf("Claude API error %d: %s", apiErr.StatusCode, apiErr.Error())
 		}
-		return nil, err
+		return "", err
 	}
 	if resp.StopReason == anthropic.BetaStopReasonRefusal {
-		return nil, errors.New("the request was declined")
+		return "", errors.New("the request was declined")
 	}
 	var text string
 	for _, block := range resp.Content {
@@ -244,24 +299,5 @@ func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
 			text += t.Text
 		}
 	}
-	var out struct {
-		Signatures []struct {
-			Key     string    `json:"key"`
-			Guesses []AIGuess `json:"guesses"`
-		} `json:"signatures"`
-	}
-	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		return nil, fmt.Errorf("unexpected AI response: %v", err)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := nowMs()
-	for _, sig := range out.Signatures {
-		s.aiSuggestions[sig.Key] = AISuggestion{At: now, Guesses: sig.Guesses}
-	}
-	if err := s.writeJSON(aiFile, s.aiSuggestions, 0o644); err != nil {
-		return nil, err
-	}
-	return s.aiSuggestions, nil
+	return text, nil
 }

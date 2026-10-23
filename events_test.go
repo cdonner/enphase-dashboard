@@ -161,7 +161,7 @@ func TestDescribeForAI(t *testing.T) {
 func TestAskAIWithoutKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
-	if _, err := NewServer(Config{DataDir: t.TempDir()}).askAI(t.Context()); err == nil {
+	if _, err := NewServer(Config{DataDir: t.TempDir()}).askAI(t.Context(), "claude"); err == nil {
 		t.Error("expected an error without an API key")
 	}
 }
