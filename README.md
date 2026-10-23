@@ -43,7 +43,7 @@ What you need:
 2. Run `docker compose up -d`.
 3. Open `http://<host>:3001`, then create or paste a gateway token (see [Gateway token](#gateway-token)).
 
-The image `ghcr.io/cdonner/enphase-dashboard` is published for `amd64`, `arm64` and 32-bit `arm/v7`.
+The image `ghcr.io/cdonner/enphase-dashboard` is published for `amd64`, `arm64`, and 32-bit `arm/v7` and `arm/v6`.
 Docker picks the right one automatically. Data, tokens, and credentials are kept in the `solar-data`
 volume, so back it up if you care about the history.
 
@@ -124,10 +124,71 @@ is kept. To update automatically, run the same command from cron, e.g. nightly.
 - **No Container Station?** Run the binary directly instead (see below).
 - **Port in use:** change the left side of the mapping, for example `"8085:3001"`.
 
+## Installing on a Raspberry Pi
+
+Any Raspberry Pi on the same network as the gateway works, from a Pi Zero W to a Pi 5. The dashboard
+runs as a single binary under systemd and needs no Docker. Raspberry Pi OS Lite is enough.
+
+| Pi | OS | Binary |
+|---|---|---|
+| Pi 3, 4, 5, Zero 2 W | 64-bit Raspberry Pi OS | `linux-arm64` |
+| Pi 2, 3, 4, Zero 2 W | 32-bit Raspberry Pi OS | `linux-armv7` |
+| Pi 1, Zero, Zero W | 32-bit Raspberry Pi OS | `linux-armv6` |
+
+The install script picks the right one for you.
+
+### Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cdonner/enphase-dashboard/main/scripts/install.sh | sudo ENVOY_HOST=192.168.1.50 sh
+```
+
+Use your gateway's IP address. You may want to [read the script](scripts/install.sh) before running it.
+It:
+
+- downloads the latest release binary for your Pi to `/usr/local/bin/enphase-dashboard` and checks
+  its checksum,
+- creates a system user `enphase` and the data directory `/var/lib/enphase-dashboard`,
+- writes the settings to `/etc/enphase-dashboard.env` (first install only), taking the time zone from
+  the Pi,
+- installs and starts the `enphase-dashboard` systemd service, which starts at boot.
+
+Then open `http://<pi-ip>:3001` and set up the [gateway token](#gateway-token).
+
+### Managing it
+
+```bash
+sudo nano /etc/enphase-dashboard.env           # change settings (cloud keys, password, ...)
+sudo systemctl restart enphase-dashboard       # apply them
+systemctl status enphase-dashboard             # is it running?
+journalctl -u enphase-dashboard -f             # logs
+```
+
+**Updating:** run the install command again. It replaces the binary, keeps your settings and data,
+and restarts the service. Add `VERSION=v1.2.0` (for example) after `sudo` to install a specific release.
+
+**Moving from another machine:** stop the dashboard there and on the Pi
+(`sudo systemctl stop enphase-dashboard`), copy the contents of the old `data/` folder to
+`/var/lib/enphase-dashboard/`, run `sudo chown -R enphase:enphase /var/lib/enphase-dashboard`, then
+start the service again. Don't run two copies with the same Enphase cloud connection (see
+[step 3 of the NAS guide](#3-moving-from-another-machine-optional)).
+
+**Uninstalling:**
+
+```bash
+sudo systemctl disable --now enphase-dashboard
+sudo rm /etc/systemd/system/enphase-dashboard.service /usr/local/bin/enphase-dashboard /etc/enphase-dashboard.env
+sudo rm -r /var/lib/enphase-dashboard   # your data and tokens
+sudo userdel enphase
+```
+
+Prefer Docker? The [Docker quick start](#quick-start-docker) also works on a Pi. The image is
+published for `arm64`, `arm/v7` and `arm/v6`.
+
 ## Running without Docker
 
 Each [release](https://github.com/cdonner/enphase-dashboard/releases) includes standalone binaries
-for Linux (`amd64`, `arm64`, `armv7`), macOS, and Windows. A binary has the UI built in, so there's
+for Linux (`amd64`, `arm64`, `armv7`, `armv6`), macOS, and Windows, plus a `SHA256SUMS` file. A binary has the UI built in, so there's
 nothing else to install:
 
 ```bash
