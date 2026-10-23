@@ -36,6 +36,7 @@ type AIGuess struct {
 type AISuggestion struct {
 	At      int64     `json:"at"`
 	Source  string    `json:"source,omitempty"` // provider that answered
+	Model   string    `json:"model,omitempty"`  // model that answered
 	Guesses []AIGuess `json:"guesses"`
 }
 
@@ -253,8 +254,12 @@ func (s *Server) askAI(ctx context.Context, provider string) (map[string]AISugge
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := nowMs()
+	model := aiModel()
+	if provider == "gemini" {
+		model = geminiModelSetting() // the model that answered
+	}
 	for _, sig := range out.Signatures {
-		s.aiSuggestions[sig.Key] = AISuggestion{At: now, Source: provider, Guesses: sig.Guesses}
+		s.aiSuggestions[sig.Key] = AISuggestion{At: now, Source: provider, Model: model, Guesses: sig.Guesses}
 	}
 	if err := s.writeJSON(aiFile, s.aiSuggestions, 0o644); err != nil {
 		return nil, err

@@ -19,13 +19,36 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
-var geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta" // replaced in tests
+var (
+	geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta" // replaced in tests
+	// Free-tier models are sometimes overloaded or slow; don't wait long on one of them.
+	geminiAttemptTimeout = 45 * time.Second
+)
 
 var geminiPicked struct {
 	sync.Mutex
-	model string
+	model      string   // the model that answered last
+	candidates []string // Flash models to try, best first
+}
+
+// geminiError carries the HTTP status so overloaded models can be skipped.
+type geminiError struct {
+	status int
+	msg    string
+}
+
+func (e *geminiError) Error() string { return e.msg }
+
+// geminiRetryable: try the next model (overloaded, rate limited, server error, too slow).
+func geminiRetryable(err error) bool {
+	var ge *geminiError
+	if errors.As(err, &ge) {
+		return ge.status == 429 || ge.status >= 500
+	}
+	return errors.Is(err, context.DeadlineExceeded)
 }
 
 func geminiEnabled() bool { return os.Getenv("GEMINI_API_KEY") != "" }
@@ -102,29 +125,27 @@ func geminiDo(ctx context.Context, method, path string, body any, out any) error
 			} `json:"error"`
 		}
 		json.Unmarshal(b, &e)
-		if res.StatusCode == 429 {
-			return errors.New("Gemini rate limit reached (free tier); try again in a minute")
-		}
 		msg := e.Error.Message
 		if msg == "" {
 			msg = strings.TrimSpace(string(b))
 		}
-		return fmt.Errorf("Gemini API error %d: %.300s", res.StatusCode, msg)
+		return &geminiError{res.StatusCode, fmt.Sprintf("Gemini API error %d: %.300s", res.StatusCode, msg)}
 	}
 	return json.Unmarshal(b, out)
 }
 
-var flashModel = regexp.MustCompile(`^models/gemini-(\d+(?:\.\d+)?)-flash$`)
+var flashModel = regexp.MustCompile(`^models/gemini-(\d+(?:\.\d+)?)-flash(-lite)?$`)
 
-// geminiModel returns GEMINI_MODEL, or picks (once) the newest plain Flash model.
-func geminiModel(ctx context.Context) (string, error) {
+// geminiModels returns the models to try: GEMINI_MODEL if set, else the plain Flash
+// models newest first, followed by the Flash-Lite ones. The list is fetched once.
+func geminiModels(ctx context.Context) ([]string, error) {
 	if m := os.Getenv("GEMINI_MODEL"); m != "" {
-		return strings.TrimPrefix(m, "models/"), nil
+		return []string{strings.TrimPrefix(m, "models/")}, nil
 	}
 	geminiPicked.Lock()
 	defer geminiPicked.Unlock()
-	if geminiPicked.model != "" {
-		return geminiPicked.model, nil
+	if len(geminiPicked.candidates) > 0 {
+		return geminiPicked.candidates, nil
 	}
 	var list struct {
 		Models []struct {
@@ -133,11 +154,12 @@ func geminiModel(ctx context.Context) (string, error) {
 		} `json:"models"`
 	}
 	if err := geminiDo(ctx, "GET", "/models?pageSize=1000", nil, &list); err != nil {
-		return "", err
+		return nil, err
 	}
 	type cand struct {
 		name    string
 		version float64
+		lite    bool
 	}
 	var cands []cand
 	for _, m := range list.Models {
@@ -147,23 +169,54 @@ func geminiModel(ctx context.Context) (string, error) {
 		}
 		if mm := flashModel.FindStringSubmatch(m.Name); canGenerate && mm != nil {
 			v, _ := strconv.ParseFloat(mm[1], 64)
-			cands = append(cands, cand{strings.TrimPrefix(m.Name, "models/"), v})
+			cands = append(cands, cand{strings.TrimPrefix(m.Name, "models/"), v, mm[2] != ""})
 		}
 	}
 	if len(cands) == 0 {
-		return "", errors.New("no Gemini Flash model available to this key; set GEMINI_MODEL")
+		return nil, errors.New("no Gemini Flash model available to this key; set GEMINI_MODEL")
 	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].version > cands[j].version })
-	geminiPicked.model = cands[0].name
-	return geminiPicked.model, nil
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].lite != cands[j].lite {
+			return !cands[i].lite
+		}
+		return cands[i].version > cands[j].version
+	})
+	for _, c := range cands {
+		geminiPicked.candidates = append(geminiPicked.candidates, c.name)
+	}
+	return geminiPicked.candidates, nil
 }
 
-// askGemini sends the request with a JSON response schema and returns the JSON text.
+// askGemini sends the request with a JSON response schema and returns the JSON text,
+// moving on to the next model when one is overloaded, rate limited or too slow.
 func askGemini(ctx context.Context, prompt string) (string, error) {
-	model, err := geminiModel(ctx)
+	models, err := geminiModels(ctx)
 	if err != nil {
 		return "", err
 	}
+	var errs []string
+	for _, model := range models {
+		attempt, cancel := context.WithTimeout(ctx, geminiAttemptTimeout)
+		text, err := askGeminiModel(attempt, model, prompt)
+		cancel()
+		if err == nil {
+			geminiPicked.Lock()
+			geminiPicked.model = model
+			geminiPicked.Unlock()
+			return text, nil
+		}
+		if ctx.Err() != nil || !geminiRetryable(err) {
+			return "", err
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("no answer within %s", geminiAttemptTimeout)
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", model, err))
+	}
+	return "", fmt.Errorf("all Gemini models were busy, try again later (%s)", strings.Join(errs, "; "))
+}
+
+func askGeminiModel(ctx context.Context, model, prompt string) (string, error) {
 	body := map[string]any{
 		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": aiSystem}}},
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": prompt}}}},

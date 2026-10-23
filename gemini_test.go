@@ -38,7 +38,7 @@ func TestAskGemini(t *testing.T) {
 	defer func() { geminiBaseURL = old }()
 	t.Setenv("GEMINI_API_KEY", "test-key")
 	t.Setenv("GEMINI_MODEL", "")
-	geminiPicked.model = ""
+	geminiPicked.model, geminiPicked.candidates = "", nil
 
 	s := NewServer(Config{DataDir: t.TempDir()})
 	for d := 0; d < 2; d++ {
@@ -70,5 +70,55 @@ func TestAskGemini(t *testing.T) {
 	}
 	if _, err := s.askAI(t.Context(), "nope"); err == nil {
 		t.Error("unknown provider should fail")
+	}
+}
+
+func TestGeminiFallsBackWhenBusy(t *testing.T) {
+	var tried []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "GET":
+			json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{
+				{"name": "models/gemini-3.8-flash", "supportedGenerationMethods": []string{"generateContent"}},
+				{"name": "models/gemini-3.5-flash", "supportedGenerationMethods": []string{"generateContent"}},
+				{"name": "models/gemini-3.0-flash", "supportedGenerationMethods": []string{"generateContent"}},
+				{"name": "models/gemini-3.8-flash-lite", "supportedGenerationMethods": []string{"generateContent"}},
+			}})
+		default:
+			model := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/models/"), ":generateContent")
+			tried = append(tried, model)
+			switch model {
+			case "gemini-3.8-flash": // overloaded
+				w.WriteHeader(503)
+				w.Write([]byte(`{"error":{"code":503,"message":"high demand","status":"UNAVAILABLE"}}`))
+			case "gemini-3.5-flash": // hangs
+				time.Sleep(300 * time.Millisecond)
+			default:
+				json.NewEncoder(w).Encode(map[string]any{"candidates": []map[string]any{
+					{"content": map[string]any{"parts": []map[string]string{{"text": `{"signatures":[]}`}}}},
+				}})
+			}
+		}
+	}))
+	defer srv.Close()
+	oldURL, oldTimeout := geminiBaseURL, geminiAttemptTimeout
+	geminiBaseURL, geminiAttemptTimeout = srv.URL, 100*time.Millisecond
+	defer func() { geminiBaseURL, geminiAttemptTimeout = oldURL, oldTimeout }()
+	t.Setenv("GEMINI_API_KEY", "k")
+	t.Setenv("GEMINI_MODEL", "")
+	geminiPicked.model, geminiPicked.candidates = "", nil
+
+	if _, err := askGemini(t.Context(), "x"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(tried, ",") != "gemini-3.8-flash,gemini-3.5-flash,gemini-3.0-flash" {
+		t.Errorf("tried %v", tried)
+	}
+	if geminiPicked.model != "gemini-3.0-flash" {
+		t.Errorf("answered by %q", geminiPicked.model)
+	}
+	// Flash-Lite comes last.
+	if c := geminiPicked.candidates; c[len(c)-1] != "gemini-3.8-flash-lite" {
+		t.Errorf("candidates %v", c)
 	}
 }

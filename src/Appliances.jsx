@@ -268,7 +268,10 @@ function Unnamed({ clusters, onChanged }) {
           </div>
           {c.ai?.guesses?.length > 0 && (
             <div className="ai-guesses">
-              <span className="muted small">{c.ai.source === 'gemini' ? 'Gemini' : 'Claude'} suggests:</span>
+              <span className="muted small">
+                {c.ai.source === 'gemini' ? 'Gemini' : 'Claude'}
+                {c.ai.model ? ` (${c.ai.model})` : ''} suggests:
+              </span>
               {c.ai.guesses.map((g) => (
                 <div key={g.name} className="ai-guess">
                   <button
