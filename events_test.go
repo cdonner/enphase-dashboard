@@ -199,3 +199,34 @@ func TestEmptyListsAreNotNull(t *testing.T) {
 		t.Error("clusters must be an empty list, not nil")
 	}
 }
+
+func TestAppliancesWithSeveralSignatures(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	// Old single-signature form is migrated.
+	s.appliances = []Appliance{{ID: "x", Name: "Coffee maker", DP: []float64{0, 400}, DQ: []float64{0, 4}}}
+	s.migrateAppliances()
+	if len(s.appliances[0].Signatures) != 1 || s.appliances[0].DP != nil {
+		t.Fatalf("migration: %+v", s.appliances[0])
+	}
+	// Naming three printer signatures with the same name (any case) makes one appliance.
+	for _, dp := range [][]float64{{344, 0}, {969, 0}, {62, 0}} {
+		s.addSignature("laser printer", Sig{DP: dp, DQ: []float64{0, 0}})
+	}
+	s.addSignature("Laser Printer", Sig{DP: []float64{960, 0}, DQ: []float64{0, 0}}) // same as 969 W: not added again
+	if len(s.appliances) != 2 || len(s.appliances[1].Signatures) != 3 {
+		t.Fatalf("appliances: %+v", s.appliances)
+	}
+	end := int64(5000)
+	if a := s.applianceFor(Run{Start: 0, End: &end, DP: []float64{965, 0}}); a == nil || a.Name != "laser printer" {
+		t.Errorf("969 W run should match the printer, got %+v", a)
+	}
+	// Runs of different signatures of one appliance form one activity.
+	acts := s.activities([]Run{
+		{Start: 0, End: ptr(int64(4000)), DP: []float64{344, 0}, DQ: []float64{0, 0}},
+		{Start: 150_000, End: ptr(int64(156_000)), DP: []float64{969, 0}, DQ: []float64{0, 0}},
+		{Start: 153_000, End: ptr(int64(195_000)), DP: []float64{62, 0}, DQ: []float64{0, 0}},
+	}, nil, 200_000)
+	if len(acts) != 1 || acts[0].Runs != 3 || acts[0].Appliance == nil {
+		t.Errorf("activities: %+v", acts)
+	}
+}

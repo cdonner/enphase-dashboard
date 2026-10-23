@@ -19,17 +19,58 @@ const (
 	clusterDays      = 7                // unnamed runs from this many days are clustered
 	matchTolPct      = 0.15             // signatures match within 15% per leg...
 	matchTolW        = 60.0             // ...or 60 W, whichever is larger
-	minClusterRuns   = 2
+	minClusterRuns   = 1                // show signatures for naming from their first run
+	maxClusters      = 40               // most energy first
 	appliancesFile   = "appliances.json"
 	maxRunsPerDayMem = 50_000
 )
 
-// Appliance is a signature the user named.
+// Sig is one step signature: power and reactive power per leg.
+type Sig struct {
+	DP []float64 `json:"dp"`
+	DQ []float64 `json:"dq"`
+}
+
+// Appliance is a name the user gave to one or more signatures (e.g. a laser printer's
+// warm-up, fuser and motor).
 type Appliance struct {
-	ID   string    `json:"id"`
-	Name string    `json:"name"`
-	DP   []float64 `json:"dp"`
-	DQ   []float64 `json:"dq"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Signatures []Sig  `json:"signatures"`
+	// Single signature as stored before appliances could have several; migrated on load.
+	DP []float64 `json:"dp,omitempty"`
+	DQ []float64 `json:"dq,omitempty"`
+}
+
+// migrateAppliances converts the old one-signature form. Caller holds s.mu.
+func (s *Server) migrateAppliances() {
+	for i := range s.appliances {
+		a := &s.appliances[i]
+		if len(a.Signatures) == 0 && len(a.DP) > 0 {
+			a.Signatures = []Sig{{DP: a.DP, DQ: a.DQ}}
+		}
+		a.DP, a.DQ = nil, nil
+	}
+}
+
+// addSignature names a signature: it joins the appliance with that name (case-insensitive)
+// or creates one. Caller holds s.mu.
+func (s *Server) addSignature(name string, sig Sig) Appliance {
+	for i := range s.appliances {
+		a := &s.appliances[i]
+		if strings.EqualFold(a.Name, name) {
+			for _, have := range a.Signatures {
+				if sameSignature(have.DP, sig.DP) {
+					return *a
+				}
+			}
+			a.Signatures = append(a.Signatures, sig)
+			return *a
+		}
+	}
+	a := Appliance{ID: newID(), Name: name, Signatures: []Sig{sig}}
+	s.appliances = append(s.appliances, a)
+	return a
 }
 
 type Signature struct {
@@ -166,8 +207,10 @@ func newID() string {
 // applianceFor returns the named appliance matching a run, if any. Caller holds s.mu.
 func (s *Server) applianceFor(r Run) *Appliance {
 	for i := range s.appliances {
-		if sameSignature(s.appliances[i].DP, r.DP) {
-			return &s.appliances[i]
+		for _, sig := range s.appliances[i].Signatures {
+			if sameSignature(sig.DP, r.DP) {
+				return &s.appliances[i]
+			}
 		}
 	}
 	return nil
@@ -347,5 +390,8 @@ func (s *Server) clusters() []Cluster {
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EnergyWh > out[j].EnergyWh })
+	if len(out) > maxClusters {
+		out = out[:maxClusters]
+	}
 	return out
 }

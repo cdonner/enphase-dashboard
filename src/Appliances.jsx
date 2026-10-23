@@ -29,8 +29,9 @@ function shiftDate(key, days) {
   return dateKey(d);
 }
 
-function Timeline({ date, activities }) {
+function Timeline({ date, activities, onName }) {
   const [hover, setHover] = useState(null);
+  const [selected, setSelected] = useState(null);
   const rows = useMemo(() => {
     const byRow = new Map();
     for (const a of activities) {
@@ -84,6 +85,8 @@ function Timeline({ date, activities }) {
                 onPointerLeave={() => setHover(null)}
                 onFocus={() => setHover({ r, s, a })}
                 onBlur={() => setHover(null)}
+                onClick={() => setSelected({ r, s, a })}
+                onKeyDown={(e) => e.key === 'Enter' && setSelected({ r, s, a })}
               />
             ))}
           </div>
@@ -101,14 +104,38 @@ function Timeline({ date, activities }) {
             </span>
           </>
         ) : (
-          <span className="muted">Hover a bar for details.</span>
+          <span className="muted">Hover a bar for details, click it to name it.</span>
         )}
       </div>
+      {selected && (
+        <div className="tl-selected">
+          <div>
+            <strong>{label(selected.a)}</strong>{' '}
+            <span className="muted small">
+              {fmtTime(selected.s[0])} · {fmtDur((selected.s[1] - selected.s[0]) / 1000)} ·{' '}
+              {sigText(selected.a.signature)}
+            </span>
+          </div>
+          {selected.a.appliance ? (
+            <span className="muted small">Already named. Manage it under Known appliances.</span>
+          ) : (
+            <NameForm
+              onSave={async (name) => {
+                await onName(name, selected.a.signature);
+                setSelected(null);
+              }}
+            />
+          )}
+          <button className="ghost" onClick={() => setSelected(null)}>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
-function NameForm({ placeholder = 'Name, e.g. Microwave', initial = '', onSave, button = 'Save' }) {
+function NameForm({ placeholder = 'Name, or pick an existing appliance', initial = '', onSave, button = 'Save' }) {
   const [name, setName] = useState(initial);
   const [busy, setBusy] = useState(false);
   return (
@@ -131,6 +158,7 @@ function NameForm({ placeholder = 'Name, e.g. Microwave', initial = '', onSave, 
         onChange={(e) => setName(e.target.value)}
         placeholder={placeholder}
         aria-label="Appliance name"
+        list="appliance-names"
       />
       <button type="submit" disabled={busy || !name.trim()}>
         {button}
@@ -141,7 +169,9 @@ function NameForm({ placeholder = 'Name, e.g. Microwave', initial = '', onSave, 
 
 function Unnamed({ clusters, onChanged }) {
   if (!clusters?.length)
-    return <p className="muted small">Nothing to name right now. New signatures show up here after they repeat.</p>;
+    return (
+      <p className="muted small">Nothing to name right now. New signatures show up here as soon as they're detected.</p>
+    );
   return (
     <div className="clusters">
       {clusters.map((c) => (
@@ -157,8 +187,8 @@ function Unnamed({ clusters, onChanged }) {
             </span>
           </div>
           <div className="muted small">
-            {c.runs} runs on {c.days} {c.days === 1 ? 'day' : 'days'} · typically on {fmtDur(c.medianOnSec)} ·{' '}
-            {fmtWh(c.energyWh)} in total
+            {c.runs} {c.runs === 1 ? 'run' : 'runs'} on {c.days} {c.days === 1 ? 'day' : 'days'} · typically on{' '}
+            {fmtDur(c.medianOnSec)} · {fmtWh(c.energyWh)} in total
           </div>
           {c.ai?.guesses?.length > 0 && (
             <div className="ai-guesses">
@@ -345,7 +375,29 @@ function Known({ appliances, onChanged }) {
                 <strong>{a.name}</strong>
               )}
             </td>
-            <td className="muted">{sigText(a.signature)}</td>
+            <td>
+              <ul className="sig-list">
+                {(a.described ?? []).map((d, n) => (
+                  <li key={n}>
+                    <span className="rect-key" style={{ background: typeOf(d.legs).color }} />
+                    <span className="muted small">{sigText(d)}</span>
+                    {a.described.length > 1 && (
+                      <button
+                        className="ghost link"
+                        title="Remove this signature from the appliance"
+                        aria-label={`Remove signature ${sigText(d)}`}
+                        onClick={async () => {
+                          await api(`/appliances/${a.id}/signatures/${n}`, { method: 'DELETE' });
+                          onChanged();
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </td>
             <td>
               <div className="row">
                 <button className="ghost" onClick={() => setEditing(editing === a.id ? null : a.id)}>
@@ -378,6 +430,11 @@ export default function Appliances() {
     day.reload();
     lists.reload();
   };
+  const nameSignature = async (name, signature) => {
+    await api('/appliances', { method: 'POST', body: { name, dp: signature.dp, dq: signature.dq } });
+    reload();
+  };
+  const knownNames = (lists.data?.appliances ?? []).map((a) => a.name);
 
   const acts = (day.data?.date === date && day.data.activities) || [];
   const running = acts.filter((a) => a.end == null);
@@ -445,7 +502,12 @@ export default function Appliances() {
             </span>
           ))}
         </div>
-        <Timeline date={date} activities={acts} />
+        <datalist id="appliance-names">
+          {knownNames.map((n) => (
+            <option key={n} value={n} />
+          ))}
+        </datalist>
+        <Timeline date={date} activities={acts} onName={nameSignature} />
         <details className="table-view">
           <summary>Table</summary>
           <div className="table-scroll">

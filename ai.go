@@ -157,10 +157,12 @@ func (s *Server) aiPrompt() (string, error) {
 	household := strings.TrimSpace(s.settings.Household)
 	var named []string
 	for _, a := range s.appliances {
-		named = append(named, fmt.Sprintf("%s (%s)", a.Name, func() string {
-			d := describe(a.DP, a.DQ)
-			return fmt.Sprintf("%.0f W, %s, %s", d.PowerW, d.Legs, d.Character)
-		}()))
+		var sigs []string
+		for _, sg := range a.Signatures {
+			d := describe(sg.DP, sg.DQ)
+			sigs = append(sigs, fmt.Sprintf("%.0f W, %s, %s", d.PowerW, d.Legs, d.Character))
+		}
+		named = append(named, fmt.Sprintf("%s (%s)", a.Name, strings.Join(sigs, "; ")))
 	}
 	legs := len(s.detector.legs)
 	s.mu.Unlock()

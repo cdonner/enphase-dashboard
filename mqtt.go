@@ -298,8 +298,12 @@ func (m *MQTT) publishState() {
 	// Appliance states from today's runs plus the runs on right now.
 	states := map[string]*applianceState{}
 	for _, a := range s.appliances {
-		sig := describe(a.DP, a.DQ)
-		states[a.ID] = &applianceState{Running: "OFF", Name: a.Name, Signature: []string{sig.Legs, sig.Character}}
+		var sigs []string
+		for _, sg := range a.Signatures {
+			d := describe(sg.DP, sg.DQ)
+			sigs = append(sigs, fmt.Sprintf("%.0f W %s %s", d.PowerW, d.Legs, d.Character))
+		}
+		states[a.ID] = &applianceState{Running: "OFF", Name: a.Name, Signature: sigs}
 	}
 	now := nowMs()
 	iso := func(ms int64) *string { return ptr(time.UnixMilli(ms).Format(time.RFC3339)) }

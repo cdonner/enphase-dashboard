@@ -240,27 +240,35 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		defer s.mu.Unlock()
 		type named struct {
 			Appliance
-			Signature Signature `json:"signature"`
+			Described []Signature `json:"described"`
 		}
 		list := []named{}
 		for _, a := range s.appliances {
-			list = append(list, named{a, describe(a.DP, a.DQ)})
+			n := named{Appliance: a, Described: []Signature{}}
+			for _, sig := range a.Signatures {
+				n.Described = append(n.Described, describe(sig.DP, sig.DQ))
+			}
+			list = append(list, n)
 		}
 		writeJSONResponse(w, 200, map[string]any{
 			"appliances": list, "unnamed": s.clusters(), "aiProviders": aiProviders(), "household": s.settings.Household,
 		})
 	}))
 
+	// Name a signature. A name that already exists adds the signature to that appliance.
 	mux.HandleFunc("POST /api/appliances", func(w http.ResponseWriter, r *http.Request) {
-		var a Appliance
-		if err := json.NewDecoder(r.Body).Decode(&a); err != nil || strings.TrimSpace(a.Name) == "" || len(a.DP) == 0 || len(a.DQ) != len(a.DP) {
+		var body struct {
+			Name string    `json:"name"`
+			DP   []float64 `json:"dp"`
+			DQ   []float64 `json:"dq"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" || len(body.DP) == 0 || len(body.DQ) != len(body.DP) {
 			writeErr(w, 400, errors.New("name, dp and dq are required"))
 			return
 		}
-		a.ID, a.Name = newID(), strings.TrimSpace(a.Name)
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		s.appliances = append(s.appliances, a)
+		a := s.addSignature(strings.TrimSpace(body.Name), Sig{DP: body.DP, DQ: body.DQ})
 		if err := s.saveAppliances(); err != nil {
 			writeErr(w, 500, err)
 			return
@@ -332,6 +340,35 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			}
 		}
 		writeErr(w, 404, errors.New("no such appliance"))
+	})
+
+	// Remove one signature from an appliance (the appliance goes when its last one does).
+	mux.HandleFunc("DELETE /api/appliances/{id}/signatures/{n}", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.Atoi(r.PathValue("n"))
+		if err != nil {
+			writeErr(w, 400, errors.New("bad signature index"))
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i := range s.appliances {
+			a := &s.appliances[i]
+			if a.ID != r.PathValue("id") || n < 0 || n >= len(a.Signatures) {
+				continue
+			}
+			a.Signatures = append(a.Signatures[:n], a.Signatures[n+1:]...)
+			if len(a.Signatures) == 0 {
+				s.appliances = append(s.appliances[:i], s.appliances[i+1:]...)
+			}
+			if err := s.saveAppliances(); err != nil {
+				writeErr(w, 500, err)
+				return
+			}
+			s.mqtt.appliancesChanged()
+			writeJSONResponse(w, 200, map[string]bool{"ok": true})
+			return
+		}
+		writeErr(w, 404, errors.New("no such appliance or signature"))
 	})
 
 	mux.HandleFunc("DELETE /api/appliances/{id}", func(w http.ResponseWriter, r *http.Request) {

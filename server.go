@@ -164,6 +164,7 @@ func (s *Server) start() {
 	s.readJSON("ev.json", &s.ev)
 	s.readJSON("settings.json", &s.settings)
 	s.readJSON(appliancesFile, &s.appliances)
+	s.migrateAppliances()
 	s.readJSON(aiFile, &s.aiSuggestions)
 	if s.aiSuggestions == nil {
 		s.aiSuggestions = map[string]AISuggestion{}
