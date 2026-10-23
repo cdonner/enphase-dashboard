@@ -243,14 +243,21 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 // ---------- clusters of unnamed runs ----------
 
 type Cluster struct {
-	Key         string    `json:"key"`
-	Signature   Signature `json:"signature"`
-	Runs        int       `json:"runs"`
-	Days        int       `json:"days"`
-	EnergyWh    float64   `json:"energyWh"`
-	MedianOnSec float64   `json:"medianOnSec"`
-	Examples    []int64   `json:"examples"`    // start times of a few runs (ms)
-	Suggestions []string  `json:"suggestions"` // likely appliances from the built-in catalog
+	Key         string        `json:"key"`
+	Signature   Signature     `json:"signature"`
+	Runs        int           `json:"runs"`
+	Days        int           `json:"days"`
+	EnergyWh    float64       `json:"energyWh"`
+	MedianOnSec float64       `json:"medianOnSec"`
+	Examples    []int64       `json:"examples"`     // start times of a few runs (ms)
+	Suggestions []string      `json:"suggestions"`  // likely appliances from the built-in catalog
+	AI          *AISuggestion `json:"ai,omitempty"` // from the last "Ask AI", if any
+
+	// Extra features used by the AI suggestions.
+	Hours        [24]int `json:"hours"`        // runs started per hour of day
+	ShortOnSec   float64 `json:"shortOnSec"`   // 10th percentile on-time
+	LongOnSec    float64 `json:"longOnSec"`    // 90th percentile on-time
+	MedianGapSec float64 `json:"medianGapSec"` // typical time between runs (0 if unknown)
 }
 
 // clusterKey is a stable id for a signature: legs used and power rounded on a log scale.
@@ -276,6 +283,8 @@ func (s *Server) clusters() []Cluster {
 		days    map[string]bool
 		ons     []float64
 		samples []int64
+		starts  []int64
+		hours   [24]int
 	}
 	var groups []*acc
 	for d := 0; d < clusterDays; d++ {
@@ -307,6 +316,8 @@ func (s *Server) clusters() []Cluster {
 			if len(g.samples) < 5 {
 				g.samples = append(g.samples, r.Start)
 			}
+			g.starts = append(g.starts, r.Start)
+			g.hours[time.UnixMilli(r.Start).Hour()]++
 		}
 	}
 	var out []Cluster
@@ -316,10 +327,24 @@ func (s *Server) clusters() []Cluster {
 		}
 		sort.Float64s(g.ons)
 		sig, median := describe(g.dp, g.dq), g.ons[len(g.ons)/2]
-		out = append(out, Cluster{
+		c := Cluster{
 			Key: clusterKey(g.dp), Signature: sig, Runs: g.n, Days: len(g.days),
 			EnergyWh: g.energy, MedianOnSec: median, Examples: g.samples, Suggestions: suggest(sig, median),
-		})
+			Hours: g.hours, ShortOnSec: g.ons[len(g.ons)/10], LongOnSec: g.ons[len(g.ons)*9/10],
+		}
+		sort.Slice(g.starts, func(i, j int) bool { return g.starts[i] < g.starts[j] })
+		var gaps []float64
+		for i := 1; i < len(g.starts); i++ {
+			gaps = append(gaps, float64(g.starts[i]-g.starts[i-1])/1000)
+		}
+		if len(gaps) > 0 {
+			sort.Float64s(gaps)
+			c.MedianGapSec = gaps[len(gaps)/2]
+		}
+		if ai, ok := s.aiSuggestions[c.Key]; ok {
+			c.AI = &ai
+		}
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].EnergyWh > out[j].EnergyWh })
 	return out

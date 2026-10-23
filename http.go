@@ -52,6 +52,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			"lastError":    s.lastError,
 			"pollMs":       s.cfg.Poll.Milliseconds(),
 			"cloud":        s.cloud.status(),
+			"mqtt":         s.mqtt.status(),
 		})
 	})
 
@@ -245,7 +246,9 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		for _, a := range s.appliances {
 			list = append(list, named{a, describe(a.DP, a.DQ)})
 		}
-		writeJSONResponse(w, 200, map[string]any{"appliances": list, "unnamed": s.clusters()})
+		writeJSONResponse(w, 200, map[string]any{
+			"appliances": list, "unnamed": s.clusters(), "aiEnabled": aiEnabled(), "household": s.settings.Household,
+		})
 	}))
 
 	mux.HandleFunc("POST /api/appliances", func(w http.ResponseWriter, r *http.Request) {
@@ -262,8 +265,39 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			writeErr(w, 500, err)
 			return
 		}
+		s.mqtt.appliancesChanged()
 		writeJSONResponse(w, 200, a)
 	})
+
+	// Household description used as context for the AI suggestions.
+	mux.HandleFunc("PUT /api/household", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Household string `json:"household"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Household) > 4000 {
+			writeErr(w, 400, errors.New("household text (up to 4000 characters) is required"))
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		st := s.settings
+		st.Household = strings.TrimSpace(body.Household)
+		if err := s.writeJSON("settings.json", st, 0o644); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		s.settings = st
+		writeJSONResponse(w, 200, map[string]bool{"ok": true})
+	})
+
+	mux.HandleFunc("POST /api/appliances/ask-ai", authed(func(w http.ResponseWriter, r *http.Request) {
+		res, err := s.askAI(r.Context())
+		if err != nil {
+			writeErr(w, 502, err)
+			return
+		}
+		writeJSONResponse(w, 200, res)
+	}))
 
 	mux.HandleFunc("PUT /api/appliances/{id}", func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
@@ -282,6 +316,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 					writeErr(w, 500, err)
 					return
 				}
+				s.mqtt.appliancesChanged()
 				writeJSONResponse(w, 200, s.appliances[i])
 				return
 			}
@@ -299,6 +334,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 					writeErr(w, 500, err)
 					return
 				}
+				s.mqtt.appliancesChanged()
 				writeJSONResponse(w, 200, map[string]bool{"ok": true})
 				return
 			}
@@ -335,13 +371,14 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			writeErr(w, 400, errors.New("blendedRate must be between 0 and 5 $/kWh"))
 			return
 		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		st.Household = s.settings.Household // edited separately (PUT /api/household)
 		if err := s.writeJSON("settings.json", st, 0o644); err != nil {
 			writeErr(w, 500, err)
 			return
 		}
-		s.mu.Lock()
 		s.settings = st
-		s.mu.Unlock()
 		writeJSONResponse(w, 200, st)
 	})
 

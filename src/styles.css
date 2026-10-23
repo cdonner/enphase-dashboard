@@ -213,3 +213,12 @@ button.chip { padding: 2px 10px; border-radius: 999px; font-size: 13px; }
   .tl-axis { margin-left: 110px; }
   .tl-row { grid-template-columns: 110px 1fr; }
 }
+
+.ask-ai { display: grid; gap: 8px; margin: 8px 0 4px; }
+.ask-ai summary { cursor: pointer; font-size: 14px; }
+.ask-ai textarea { width: 100%; font: inherit; font-size: 14px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); margin: 6px 0; }
+.ai-row { align-items: center; }
+.ai-guesses { display: grid; gap: 4px; }
+.ai-guess { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.confidence { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--text-secondary); }
+.confidence.high { border-color: #0ca30c; }

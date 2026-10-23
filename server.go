@@ -63,6 +63,7 @@ type Server struct {
 	gateway *http.Client // self-signed certificate
 	web     *http.Client
 	cloud   *Cloud
+	mqtt    *MQTT         // nil unless MQTT_URL is set
 	kick    chan struct{} // trigger an immediate sample
 
 	mu          sync.Mutex // guards everything below
@@ -89,8 +90,9 @@ type Server struct {
 		runs  []Run
 		dirty bool
 	}
-	appliances []Appliance
-	inverters  struct {
+	appliances    []Appliance
+	aiSuggestions map[string]AISuggestion // cluster key -> last AI answer
+	inverters     struct {
 		at   int64
 		data json.RawMessage
 	}
@@ -105,17 +107,21 @@ func NewServer(cfg Config) *Server {
 			MaxIdleConns:    4,
 			IdleConnTimeout: 90 * time.Second,
 		}},
-		web:        &http.Client{Timeout: 30 * time.Second},
-		kick:       make(chan struct{}, 1),
-		daily:      map[string]*Day{},
-		cloudDaily: map[string]*CloudDay{},
-		ev:         EvState{Chargers: []EvCharger{}},
-		evDays:     map[string]*EvDay{},
-		settings:   Settings{Rates: map[string]float64{}},
-		detector:   NewDetector(),
-		appliances: []Appliance{},
+		web:           &http.Client{Timeout: 30 * time.Second},
+		kick:          make(chan struct{}, 1),
+		daily:         map[string]*Day{},
+		cloudDaily:    map[string]*CloudDay{},
+		ev:            EvState{Chargers: []EvCharger{}},
+		evDays:        map[string]*EvDay{},
+		settings:      Settings{Rates: map[string]float64{}},
+		detector:      NewDetector(),
+		appliances:    []Appliance{},
+		aiSuggestions: map[string]AISuggestion{},
 	}
 	s.cloud = NewCloud(s)
+	if cfg.MQTT.URL != "" {
+		s.mqtt = NewMQTT(s, cfg.MQTT)
+	}
 	return s
 }
 
@@ -158,6 +164,10 @@ func (s *Server) start() {
 	s.readJSON("ev.json", &s.ev)
 	s.readJSON("settings.json", &s.settings)
 	s.readJSON(appliancesFile, &s.appliances)
+	s.readJSON(aiFile, &s.aiSuggestions)
+	if s.aiSuggestions == nil {
+		s.aiSuggestions = map[string]AISuggestion{}
+	}
 	if s.appliances == nil {
 		s.appliances = []Appliance{}
 	}
@@ -183,6 +193,9 @@ func (s *Server) start() {
 	s.renewIfNeeded()
 
 	go s.sampleLoop()
+	if s.mqtt != nil {
+		s.mqtt.start()
+	}
 	go every(10*time.Minute, 0, s.renewIfNeeded)
 	go every(10*time.Minute, 10*time.Minute, s.loadGatewayInfo)
 	go every(10*time.Minute, 15*time.Second, s.cloudTick) // first run after today's baseline exists

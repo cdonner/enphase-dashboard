@@ -10,6 +10,8 @@ local network, and can optionally use the **Enphase cloud API** to fill in histo
 - EV charger sessions: energy, range added, how much came from solar, and the value at your electricity rates
 - Gateway token creation and renewal built in (Enlighten sign-in, or paste a token)
 - Appliance detection: finds larger appliances switching on and off in the second-by-second data, with suggestions for naming them
+- Optional AI suggestions (Claude) for naming detected appliances
+- Home Assistant integration over MQTT, with automatic discovery
 - Light and dark mode (automatic, or chosen with the theme button), works on phones, and every chart has a table view
 
 Not affiliated with or endorsed by Enphase Energy.
@@ -82,6 +84,8 @@ services:
       # ENPHASE_API_KEY: ""
       # ENPHASE_CLIENT_ID: ""
       # ENPHASE_CLIENT_SECRET: ""
+      # ANTHROPIC_API_KEY: ""     # AI suggestions for appliances
+      # MQTT_URL: mqtt://192.168.1.20:1883   # Home Assistant
     volumes:
       - /share/Container/solar-dashboard/data:/app/data   # Synology: /volume1/docker/solar-dashboard/data
 ```
@@ -226,6 +230,9 @@ to the Go server.
 | `POLL_MS` | `1000` | Gateway polling interval; appliance detection needs 1-second readings |
 | `DASHBOARD_PASSWORD` | – | If set, the dashboard asks for this password (HTTP basic auth, any username) |
 | `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, `ENPHASE_CLIENT_SECRET` | – | Enables the [Enphase cloud](#enphase-cloud-optional) features |
+| `ANTHROPIC_API_KEY` | – | Enables [AI suggestions](#ai-suggestions-optional) for appliances |
+| `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD` | – | Enables [Home Assistant](#home-assistant) publishing |
+| `MQTT_TOPIC`, `HA_DISCOVERY_PREFIX` | `enphase_dashboard`, `homeassistant` | MQTT topics |
 
 ## Gateway token
 
@@ -355,6 +362,54 @@ To identify one, switch a suspect on or off and watch for the bar on today's tim
 Steady loads like servers and network gear simply form the base load. The gateway is polled every
 second for this (`POLL_MS`); only detected runs are stored, about 100 bytes each.
 
+### AI suggestions (optional)
+
+The built-in catalog only looks at power and circuit. The **Ask AI to identify** button sends the
+unnamed signatures to Claude, which can weigh more clues together: how regularly a load repeats,
+the hours it runs, and your own description of the house. That description goes in **About your
+home**, e.g. which appliances run on gas, what's off for the season, the size of a sauna heater. Each
+signature then shows up to three guesses with a confidence level and a one-line reason, and
+clicking a guess names the signature.
+
+What is sent: for each unnamed signature, its step size, circuit, character, typical run times,
+repeat interval, starts per hour of day and energy, plus your household text and the names of
+appliances you've already identified. No raw readings, gateway details or location are sent. Requests
+happen only when you click the button, and use Claude Opus 5.5. A request typically costs a few cents.
+
+To enable it, set `ANTHROPIC_API_KEY` (from <https://console.anthropic.com>) in the dashboard's
+environment. Workload identity federation also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
+`ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE`
+instead of a key. This needs an identity provider that issues tokens for the machine the dashboard
+runs on (Kubernetes, a cloud VM, CI), so on a home NAS or Pi an API key is the practical choice.
+
+## Home Assistant
+
+With `MQTT_URL` set, the dashboard publishes to an MQTT broker using
+[Home Assistant MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery), so
+the sensors appear automatically under a device called **Enphase dashboard**:
+
+| Entity | Unit |
+|---|---|
+| Solar production, House consumption, Grid power (import +, export -) | W |
+| Solar produced / Consumed / Grid import / Grid export today | Wh (reset daily, usable in the Energy dashboard) |
+| For each named appliance: running (on/off), power, energy today | – / W / Wh |
+
+Named appliances are added and removed in Home Assistant as you name or forget them. With these you
+can build automations like "notify me when the dryer stops running".
+
+Setup:
+
+1. In Home Assistant, install the **Mosquitto broker** add-on (or use any MQTT broker) and the
+   **MQTT** integration.
+2. Set `MQTT_URL` (e.g. `mqtt://192.168.1.20:1883`, or `mqtts://` for TLS), and `MQTT_USERNAME` /
+   `MQTT_PASSWORD` if the broker needs them, then restart the dashboard.
+3. The settings panel (**Token** button) shows whether the dashboard is connected.
+
+State is published every 10 seconds as retained JSON on `enphase_dashboard/state` and
+`enphase_dashboard/appliance/<id>`, with availability on `enphase_dashboard/availability`. Change the
+base topic with `MQTT_TOPIC`, and the discovery prefix with `HA_DISCOVERY_PREFIX` (default
+`homeassistant`).
+
 ## Data and security
 
 Everything is stored in the data directory (`DATA_DIR`):
@@ -365,7 +420,7 @@ Everything is stored in the data directory (`DATA_DIR`):
 | `credentials.json` | Enlighten login, only if *Remember credentials* was ticked (mode 600) |
 | `cloud.json` | Enphase cloud OAuth tokens (mode 600) |
 | `settings.json`, `rates.csv` | Electricity rates (`rates.csv` is optional, see [Rate file](#rate-file)) |
-| `appliances.json` | Appliance names and signatures |
+| `appliances.json`, `ai-suggestions.json` | Appliance names and signatures, last AI suggestions |
 | `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/`, `events/` | Recorded data |
 
 Tokens and passwords never reach the browser. The dashboard has no user accounts, though, so

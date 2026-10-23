@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -139,5 +140,27 @@ func TestSuggestions(t *testing.T) {
 		if !found {
 			t.Errorf("%v %.0fs: suggestions %v, want %q among them", c.dp, c.onSec, got, c.want)
 		}
+	}
+}
+
+func TestDescribeForAI(t *testing.T) {
+	c := Cluster{
+		Key: "0.27", Signature: describe([]float64{0, 400}, []float64{0, 4}), Runs: 900, Days: 3,
+		MedianOnSec: 3, ShortOnSec: 2, LongOnSec: 4, MedianGapSec: 16, EnergyWh: 1200,
+	}
+	c.Hours[7], c.Hours[8] = 400, 500
+	got := describeForAI(c, 2)
+	for _, want := range []string{"400 W step", "120 V · leg 2", "resistive", "every 16 s", "07:400 08:500", "1.20 kWh"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+}
+
+func TestAskAIWithoutKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	if _, err := NewServer(Config{DataDir: t.TempDir()}).askAI(t.Context()); err == nil {
+		t.Error("expected an error without an API key")
 	}
 }

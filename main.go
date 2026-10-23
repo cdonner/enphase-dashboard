@@ -41,6 +41,7 @@ type Config struct {
 	APIKey            string
 	ClientID          string
 	ClientSecret      string
+	MQTT              MQTTConfig
 }
 
 func env(key, def string) string {
@@ -89,6 +90,13 @@ func loadConfig() Config {
 		APIKey:            os.Getenv("ENPHASE_API_KEY"),
 		ClientID:          os.Getenv("ENPHASE_CLIENT_ID"),
 		ClientSecret:      os.Getenv("ENPHASE_CLIENT_SECRET"),
+		MQTT: MQTTConfig{
+			URL:             os.Getenv("MQTT_URL"),
+			Username:        os.Getenv("MQTT_USERNAME"),
+			Password:        os.Getenv("MQTT_PASSWORD"),
+			Topic:           os.Getenv("MQTT_TOPIC"),
+			DiscoveryPrefix: os.Getenv("HA_DISCOVERY_PREFIX"),
+		},
 	}
 }
 

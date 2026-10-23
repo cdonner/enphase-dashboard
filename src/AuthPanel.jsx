@@ -188,6 +188,16 @@ export default function AuthPanel({ status, onDone, onClose }) {
 
       <h2 className="section-gap">Cloud backfill</h2>
       <CloudSection cloud={status?.cloud} onDone={onDone} />
+
+      <h2 className="section-gap">Home Assistant (MQTT)</h2>
+      {status?.mqtt?.enabled ? (
+        <p className="small">
+          {status.mqtt.connected ? '● Connected' : '⚠ Not connected'} to {status.mqtt.broker}
+          {status.mqtt.error ? ` · ${status.mqtt.error}` : ''}
+        </p>
+      ) : (
+        <p className="muted small">Off. Set MQTT_URL to publish sensors to Home Assistant (see the README).</p>
+      )}
     </section>
   );
 }

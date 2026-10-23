@@ -157,9 +157,32 @@ function Unnamed({ clusters, onChanged }) {
             {c.runs} runs on {c.days} {c.days === 1 ? 'day' : 'days'} · typically on {fmtDur(c.medianOnSec)} ·{' '}
             {fmtWh(c.energyWh)} in total
           </div>
+          {c.ai?.guesses?.length > 0 && (
+            <div className="ai-guesses">
+              {c.ai.guesses.map((g) => (
+                <div key={g.name} className="ai-guess">
+                  <button
+                    className="ghost chip"
+                    title={`Name it "${g.name}"`}
+                    onClick={async () => {
+                      await api('/appliances', {
+                        method: 'POST',
+                        body: { name: g.name, dp: c.signature.dp, dq: c.signature.dq },
+                      });
+                      onChanged();
+                    }}
+                  >
+                    {g.name}
+                  </button>
+                  <span className={`confidence ${g.confidence}`}>{g.confidence}</span>
+                  <span className="muted small">{g.reason}</span>
+                </div>
+              ))}
+            </div>
+          )}
           {c.suggestions?.length > 0 && (
             <div className="row suggestions">
-              <span className="muted small">Possibly:</span>
+              <span className="muted small">{c.ai?.guesses?.length ? 'Catalog:' : 'Possibly:'}</span>
               {c.suggestions.map((name) => (
                 <button
                   key={name}
@@ -192,6 +215,68 @@ function Unnamed({ clusters, onChanged }) {
           />
         </div>
       ))}
+    </div>
+  );
+}
+
+function AskAI({ enabled, household, onChanged }) {
+  const [text, setText] = useState(household ?? '');
+  const [saved, setSaved] = useState(household ?? '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [savedAt, setSavedAt] = useState(null);
+
+  async function saveHousehold() {
+    await api('/household', { method: 'PUT', body: { household: text } });
+    setSaved(text);
+    setSavedAt(Date.now());
+  }
+  async function ask() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (text !== saved) await saveHousehold();
+      await api('/appliances/ask-ai', { method: 'POST' });
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="ask-ai">
+      <details open={!household}>
+        <summary>About your home</summary>
+        <p className="muted small">
+          List your larger appliances and anything unusual: what runs on gas, what's off for the season, sizes you know.
+          This is sent with the AI request as context.
+        </p>
+        <textarea
+          rows={5}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="e.g. Gas water heater and 2 gas furnaces (blowers are electric). 6 kW sauna heater with 3 stages. Drip coffee maker. Pool pump off for winter."
+        />
+        <div className="row">
+          <button className="ghost" disabled={text === saved} onClick={saveHousehold}>
+            Save
+          </button>
+          {savedAt && text === saved && <span className="muted small">Saved</span>}
+        </div>
+      </details>
+      <div className="row ai-row">
+        <button disabled={!enabled || busy} onClick={ask}>
+          {busy ? 'Asking Claude…' : 'Ask AI to identify'}
+        </button>
+        <span className="muted small">
+          {enabled
+            ? 'Sends only summary numbers per signature and the text above to Claude.'
+            : 'Set ANTHROPIC_API_KEY on the server to enable AI suggestions (see the README).'}
+        </span>
+      </div>
+      {error && <p className="error">{error}</p>}
     </div>
   );
 }
@@ -358,6 +443,7 @@ export default function Appliances() {
             Signatures that repeated over the last 7 days, most energy first. Naming one labels all of its runs, past
             and future.
           </p>
+          {lists.data && <AskAI enabled={lists.data.aiEnabled} household={lists.data.household} onChanged={reload} />}
           <Unnamed clusters={lists.data?.unnamed} onChanged={reload} />
         </section>
         <section className="card">

@@ -16,6 +16,10 @@ services:
       ENPHASE_API_KEY: ${ENPHASE_API_KEY:-}
       ENPHASE_CLIENT_ID: ${ENPHASE_CLIENT_ID:-}
       ENPHASE_CLIENT_SECRET: ${ENPHASE_CLIENT_SECRET:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      MQTT_URL: ${MQTT_URL:-}
+      MQTT_USERNAME: ${MQTT_USERNAME:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
     volumes:
       - solar-data:/app/data
 
