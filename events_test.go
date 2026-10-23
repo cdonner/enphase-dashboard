@@ -356,3 +356,20 @@ func TestLoadAlreadyOnAtStartup(t *testing.T) {
 		t.Errorf("signature %+v", sig)
 	}
 }
+
+func TestBigSwitchOffWithoutStartIsRecorded(t *testing.T) {
+	d := NewDetector() // no history: the EV is just "base load" at first
+	feed(d, 1_792_000_000, 600, func(t int) []float64 {
+		if t < 400 {
+			return []float64{5100, 5000}
+		}
+		return []float64{500, 400}
+	}, 0)
+	runs := d.drainClosed()
+	if len(runs) != 1 || !runs[0].StartedBefore || runs[0].Start != 1_792_000_000_000 {
+		t.Fatalf("runs %+v", runs)
+	}
+	if sig := describe(runs[0].DP, runs[0].DQ); sig.Legs != "240 V" || !near(sig.PowerW, 9200, 200) {
+		t.Errorf("signature %+v", sig)
+	}
+}

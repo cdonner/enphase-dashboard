@@ -79,6 +79,7 @@ type Detector struct {
 	hourMin  [][24]float64
 	hourSeen [][24]int64 // unix hour each bucket belongs to
 	started  bool        // the first full set of stable levels has been checked
+	firstAt  int64       // time of the first reading since this start (ms)
 }
 
 func NewDetector() *Detector { return &Detector{} }
@@ -177,6 +178,9 @@ func (d *Detector) trackBase(at int64) {
 
 // Add feeds one reading: per-leg consumption P (W) and Q (var) at time `at` (ms).
 func (d *Detector) Add(at int64, p, q []float64) {
+	if d.firstAt == 0 {
+		d.firstAt = at
+	}
 	if len(d.legs) != len(p) {
 		d.legs = make([]*legTracker, len(p))
 		for i := range d.legs {
@@ -337,7 +341,14 @@ func (d *Detector) matchOff(e *pendingEdge) {
 		}
 	}
 	if best < 0 {
-		return // an off without a matching on (started before we were watching, or merged)
+		// An off without a matching on: started before we were watching, or merged with
+		// another step. A big one is recorded from the start of monitoring, marked as such.
+		if offSum >= alreadyOnMinW && d.firstAt > 0 {
+			end := e.at
+			d.closed = append(d.closed, Run{Start: d.firstAt, End: &end, DP: off,
+				DQ: make([]float64, len(off)), StartedBefore: true})
+		}
+		return
 	}
 	r := d.open[best]
 	end := e.at
