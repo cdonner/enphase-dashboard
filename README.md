@@ -360,7 +360,11 @@ turning off one element at a time, each stage is split off its run.
 first, so you can name them in batches. You can also click a bar on the timeline and name it there.
 Many appliances have several signatures (a laser printer's warm-up, fuser and paper motor; a dryer's
 element and drum motor; each stage of a sauna heater). Give them the same name and they become one
-appliance with one timeline row; the name field suggests the names you've already used. Each shows how often it ran, for how long, example
+appliance with one timeline row; the name field suggests the names you've already used.
+Each signature can also get its own label, such as *warm-up*, *printing* or *stage 2*, which
+appears in the timeline details. Click a named run on the timeline to label its signature, move it
+to another appliance (or a new one), or take it off its appliance. Labels can also be edited under
+*Known appliances*. Each shows how often it ran, for how long, example
 times, and up to three suggestions from a built-in catalog of common appliances (water heater,
 dryer, oven, AC/heat pump, well pump, microwave, kettle, laser printer, furnace blower, ...). Click a
 suggestion or type a name. The name then applies to all past and future runs with that signature.

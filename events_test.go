@@ -230,3 +230,29 @@ func TestAppliancesWithSeveralSignatures(t *testing.T) {
 		t.Errorf("activities: %+v", acts)
 	}
 }
+
+func TestLabelAndMoveSignature(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	p := s.addSignature("Laser printer", Sig{DP: []float64{344, 0}, DQ: []float64{0, 0}})
+	s.addSignature("Laser printer", Sig{DP: []float64{969, 0}, DQ: []float64{0, 0}})
+	s.appliances[0].Signatures[1].Label = "printing"
+
+	acts := s.activities([]Run{{Start: 0, End: ptr(int64(6000)), DP: []float64{969, 0}, DQ: []float64{0, 0}}}, nil, 10_000)
+	if sp := acts[0].Spans[0]; sp.Sig != 1 || sp.Label != "printing" || acts[0].ApplianceID == nil {
+		t.Errorf("span %+v", sp)
+	}
+	// Move the warm-up signature to a new appliance; the printer keeps the other one.
+	if _, err := s.moveSignature(p.ID, 0, "Space heater"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.appliances) != 2 || len(s.appliances[0].Signatures) != 1 || s.appliances[1].Name != "Space heater" {
+		t.Fatalf("after move: %+v", s.appliances)
+	}
+	// Moving the last signature away removes the appliance.
+	if _, err := s.moveSignature(s.appliances[0].ID, 0, "Space heater"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.appliances) != 1 || len(s.appliances[0].Signatures) != 2 {
+		t.Fatalf("after second move: %+v", s.appliances)
+	}
+}

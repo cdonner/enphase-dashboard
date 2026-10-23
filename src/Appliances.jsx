@@ -29,7 +29,83 @@ function shiftDate(key, days) {
   return dateKey(d);
 }
 
-function Timeline({ date, activities, onName }) {
+// Details of a clicked run: name it, or for a named one label its signature, move it to
+// another appliance, or take it off its appliance.
+function Selected({ sel, onName, onChanged, onClose }) {
+  const { a, sp, s } = sel;
+  const [labelText, setLabelText] = useState(sp.label ?? '');
+  const sigUrl = `/appliances/${a.applianceId}/signatures/${sp.sig}`;
+  const done = () => {
+    onChanged();
+    onClose();
+  };
+  return (
+    <div className="tl-selected">
+      <div className="tl-selected-head">
+        <strong>
+          {label(a)}
+          {sp.label ? ` · ${sp.label}` : ''}
+        </strong>{' '}
+        <span className="muted small">
+          {fmtTime(s[0])} · {fmtDur((s[1] - s[0]) / 1000)} · {sigText(sp.desc)}
+        </span>
+        <button className="ghost" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      {!a.appliance ? (
+        <NameForm
+          onSave={async (name) => {
+            await onName(name, sp.desc);
+            onClose();
+          }}
+        />
+      ) : (
+        <div className="sel-actions">
+          <form
+            className="row name-form"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              await api(sigUrl, { method: 'PUT', body: { label: labelText } });
+              done();
+            }}
+          >
+            <input
+              value={labelText}
+              onChange={(e) => setLabelText(e.target.value)}
+              placeholder="Label for this signature, e.g. warm-up"
+              aria-label="Signature label"
+            />
+            <button type="submit" className="ghost">
+              Save label
+            </button>
+          </form>
+          <NameForm
+            placeholder="Move to another appliance (or a new name)"
+            button="Move"
+            onSave={async (name) => {
+              await api(`${sigUrl}/move`, { method: 'POST', body: { name } });
+              done();
+            }}
+          />
+          <div className="row">
+            <button
+              className="ghost danger"
+              onClick={async () => {
+                await api(sigUrl, { method: 'DELETE' });
+                done();
+              }}
+            >
+              Remove from {a.appliance}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Timeline({ date, activities, onName, onChanged }) {
   const [hover, setHover] = useState(null);
   const [selected, setSelected] = useState(null);
   const rows = useMemo(() => {
@@ -44,7 +120,7 @@ function Timeline({ date, activities, onName }) {
         spans: [],
         energy: 0,
       };
-      row.spans.push(...a.spans.map((s) => ({ s, a })));
+      row.spans.push(...a.spans.map((sp) => ({ s: [sp.s, sp.e], sp, a })));
       row.energy += a.energyWh;
       byRow.set(key, row);
     }
@@ -97,7 +173,7 @@ function Timeline({ date, activities, onName }) {
             onPointerLeave={() => setHover(null)}
             onClick={(e) => setSelected(nearest(r, e))}
           >
-            {r.spans.map(({ s, a }, i) => (
+            {r.spans.map(({ s, sp, a }, i) => (
               <span
                 key={i}
                 className="tl-bar"
@@ -107,9 +183,9 @@ function Timeline({ date, activities, onName }) {
                   width: `max(2px, calc(${pct(s[1])} - ${pct(s[0])}))`,
                   background: r.type.color,
                 }}
-                onFocus={() => setHover({ r, s, a })}
+                onFocus={() => setHover({ r, s, sp, a })}
                 onBlur={() => setHover(null)}
-                onKeyDown={(e) => e.key === 'Enter' && setSelected({ r, s, a })}
+                onKeyDown={(e) => e.key === 'Enter' && setSelected({ r, s, sp, a })}
               />
             ))}
           </div>
@@ -123,37 +199,14 @@ function Timeline({ date, activities, onName }) {
             </strong>{' '}
             <span className="muted">
               {fmtDur((hover.s[1] - hover.s[0]) / 1000)} · {label(hover.a)}
-              {hover.a.appliance ? ` · ${sigText(hover.a.signature)}` : ` · ${hover.a.signature.character}`}
+              {hover.sp.label ? ` · ${hover.sp.label}` : ''} · {sigText(hover.sp.desc)}
             </span>
           </>
         ) : (
           <span className="muted">Hover a bar for details, click it to name it.</span>
         )}
       </div>
-      {selected && (
-        <div className="tl-selected">
-          <div>
-            <strong>{label(selected.a)}</strong>{' '}
-            <span className="muted small">
-              {fmtTime(selected.s[0])} · {fmtDur((selected.s[1] - selected.s[0]) / 1000)} ·{' '}
-              {sigText(selected.a.signature)}
-            </span>
-          </div>
-          {selected.a.appliance ? (
-            <span className="muted small">Already named. Manage it under Known appliances.</span>
-          ) : (
-            <NameForm
-              onSave={async (name) => {
-                await onName(name, selected.a.signature);
-                setSelected(null);
-              }}
-            />
-          )}
-          <button className="ghost" onClick={() => setSelected(null)}>
-            Close
-          </button>
-        </div>
-      )}
+      {selected && <Selected sel={selected} onName={onName} onChanged={onChanged} onClose={() => setSelected(null)} />}
     </div>
   );
 }
@@ -283,10 +336,24 @@ function AskAI({ providers = [], household, onChanged }) {
   const [error, setError] = useState(null);
   const [note, setNote] = useState(null);
   const [manual, setManual] = useState(null); // prompt to copy by hand when the clipboard isn't available
+  const [open, setOpen] = useState(!household);
+  const [justSaved, setJustSaved] = useState(false);
 
   async function saveHousehold() {
     await api('/household', { method: 'PUT', body: { household: text } });
     setSaved(text);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 3000);
+  }
+  async function onSave() {
+    setError(null);
+    try {
+      await saveHousehold();
+      setOpen(false);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
   }
   async function run(fn) {
     setBusy(true);
@@ -328,8 +395,15 @@ function AskAI({ providers = [], household, onChanged }) {
 
   return (
     <div className="ask-ai">
-      <details open={!household}>
-        <summary>About your home</summary>
+      <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+        <summary>
+          About your home{' '}
+          {justSaved ? (
+            <span className="small saved">✓ Saved</span>
+          ) : saved ? (
+            <span className="muted small">(saved)</span>
+          ) : null}
+        </summary>
         <p className="muted small">
           List your larger appliances and anything unusual: what runs on gas, what's off for the season, sizes you know.
           It's included in the AI prompt as context.
@@ -341,7 +415,7 @@ function AskAI({ providers = [], household, onChanged }) {
           placeholder="e.g. Gas water heater and 2 gas furnaces (blowers are electric). 6 kW sauna heater with 3 stages. Drip coffee maker. Pool pump off for winter."
         />
         <div className="row">
-          <button className="ghost" disabled={text === saved} onClick={() => run(saveHousehold)}>
+          <button className="ghost" disabled={text === saved} onClick={onSave}>
             Save
           </button>
         </div>
@@ -375,6 +449,34 @@ function AskAI({ providers = [], household, onChanged }) {
   );
 }
 
+function SigLabel({ appliance, n, onChanged }) {
+  const current = appliance.signatures?.[n]?.label ?? '';
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(current);
+  if (!editing)
+    return (
+      <button className="ghost link sig-label" title="Label this signature" onClick={() => setEditing(true)}>
+        {current || '+ label'}
+      </button>
+    );
+  return (
+    <form
+      className="row"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        await api(`/appliances/${appliance.id}/signatures/${n}`, { method: 'PUT', body: { label: text } });
+        setEditing(false);
+        onChanged();
+      }}
+    >
+      <input className="sig-label-input" autoFocus value={text} onChange={(e) => setText(e.target.value)} />
+      <button type="submit" className="ghost">
+        Save
+      </button>
+    </form>
+  );
+}
+
 function Known({ appliances, onChanged }) {
   const [editing, setEditing] = useState(null);
   if (!appliances?.length) return <p className="muted small">None yet.</p>;
@@ -403,6 +505,7 @@ function Known({ appliances, onChanged }) {
                 {(a.described ?? []).map((d, n) => (
                   <li key={n}>
                     <span className="rect-key" style={{ background: typeOf(d.legs).color }} />
+                    <SigLabel appliance={a} n={n} onChanged={onChanged} />
                     <span className="muted small">{sigText(d)}</span>
                     {a.described.length > 1 && (
                       <button
@@ -530,7 +633,7 @@ export default function Appliances() {
             <option key={n} value={n} />
           ))}
         </datalist>
-        <Timeline date={date} activities={acts} onName={nameSignature} />
+        <Timeline date={date} activities={acts} onName={nameSignature} onChanged={reload} />
         <details className="table-view">
           <summary>Table</summary>
           <div className="table-scroll">

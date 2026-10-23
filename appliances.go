@@ -7,6 +7,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -25,10 +26,12 @@ const (
 	maxRunsPerDayMem = 50_000
 )
 
-// Sig is one step signature: power and reactive power per leg.
+// Sig is one step signature: power and reactive power per leg, with an optional label
+// naming what it is within its appliance (e.g. "warm-up", "printing").
 type Sig struct {
-	DP []float64 `json:"dp"`
-	DQ []float64 `json:"dq"`
+	DP    []float64 `json:"dp"`
+	DQ    []float64 `json:"dq"`
+	Label string    `json:"label,omitempty"`
 }
 
 // Appliance is a name the user gave to one or more signatures (e.g. a laser printer's
@@ -206,30 +209,68 @@ func newID() string {
 
 // applianceFor returns the named appliance matching a run, if any. Caller holds s.mu.
 func (s *Server) applianceFor(r Run) *Appliance {
+	a, _ := s.matchSignature(r.DP)
+	return a
+}
+
+// matchSignature returns the named appliance and the index of its signature matching dp.
+// Caller holds s.mu.
+func (s *Server) matchSignature(dp []float64) (*Appliance, int) {
 	for i := range s.appliances {
-		for _, sig := range s.appliances[i].Signatures {
-			if sameSignature(sig.DP, r.DP) {
-				return &s.appliances[i]
+		for n, sig := range s.appliances[i].Signatures {
+			if sameSignature(sig.DP, dp) {
+				return &s.appliances[i], n
 			}
 		}
 	}
-	return nil
+	return nil, -1
+}
+
+// moveSignature takes signature n off appliance id and names it `name` (an existing
+// appliance or a new one). An appliance left without signatures is removed. Caller holds s.mu.
+func (s *Server) moveSignature(id string, n int, name string) (Appliance, error) {
+	for i := range s.appliances {
+		a := &s.appliances[i]
+		if a.ID != id || n < 0 || n >= len(a.Signatures) {
+			continue
+		}
+		sig := a.Signatures[n]
+		if strings.EqualFold(a.Name, name) {
+			return *a, nil
+		}
+		a.Signatures = append(a.Signatures[:n], a.Signatures[n+1:]...)
+		if len(a.Signatures) == 0 {
+			s.appliances = append(s.appliances[:i], s.appliances[i+1:]...)
+		}
+		return s.addSignature(name, sig), nil
+	}
+	return Appliance{}, errors.New("no such appliance or signature")
 }
 
 // ---------- day view ----------
 
 type Activity struct {
-	Start      int64      `json:"start"`
-	End        *int64     `json:"end"` // nil while running
-	Runs       int        `json:"runs"`
-	EnergyWh   float64    `json:"energyWh"`
-	OnSeconds  float64    `json:"onSeconds"`
-	Signature  Signature  `json:"signature"`
-	Appliance  *string    `json:"appliance"` // name, if identified
-	ClusterKey string     `json:"clusterKey"`
-	Spans      [][2]int64 `json:"spans"` // individual runs [start, end] ms, for the timeline
-	lastEnd    int64
-	running    bool
+	Start       int64     `json:"start"`
+	End         *int64    `json:"end"` // nil while running
+	Runs        int       `json:"runs"`
+	EnergyWh    float64   `json:"energyWh"`
+	OnSeconds   float64   `json:"onSeconds"`
+	Signature   Signature `json:"signature"`
+	Appliance   *string   `json:"appliance"`   // name, if identified
+	ApplianceID *string   `json:"applianceId"` // id, if identified
+	ClusterKey  string    `json:"clusterKey"`
+	Spans       []Span    `json:"spans"` // the individual runs, for the timeline
+	lastEnd     int64
+	running     bool
+}
+
+// Span is one run within an activity.
+type Span struct {
+	Start int64     `json:"s"`
+	End   int64     `json:"e"`
+	Sig   int       `json:"sig"`             // index into the appliance's signatures, -1 if unnamed
+	Label string    `json:"label,omitempty"` // that signature's label
+	Desc  Signature `json:"desc"`            // this run's own signature
 }
 
 // activities groups a day's runs (plus runs still on) into activities: same appliance
@@ -243,10 +284,11 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 		if r.End != nil {
 			end = *r.End
 		}
-		app := s.applianceFor(r)
-		var name *string
+		app, sigN := s.matchSignature(r.DP)
+		var name, id *string
+		label := ""
 		if app != nil {
-			name = &app.Name
+			name, id, label = &app.Name, &app.ID, app.Signatures[sigN].Label
 		}
 		// Extend the latest activity with the same appliance/signature, if close enough.
 		var a *Activity
@@ -264,13 +306,13 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 			}
 		}
 		if a == nil {
-			out = append(out, Activity{Start: r.Start, Signature: describe(r.DP, r.DQ), Appliance: name})
+			out = append(out, Activity{Start: r.Start, Signature: describe(r.DP, r.DQ), Appliance: name, ApplianceID: id})
 			a = &out[len(out)-1]
 		}
 		a.Runs++
 		a.OnSeconds += float64(end-r.Start) / 1000
 		a.EnergyWh += r.power() * float64(end-r.Start) / 3_600_000
-		a.Spans = append(a.Spans, [2]int64{r.Start, end})
+		a.Spans = append(a.Spans, Span{Start: r.Start, End: end, Sig: sigN, Label: label, Desc: describe(r.DP, r.DQ)})
 		a.lastEnd = max(a.lastEnd, end)
 		a.running = a.running || r.End == nil
 	}

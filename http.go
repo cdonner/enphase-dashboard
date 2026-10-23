@@ -342,6 +342,58 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		writeErr(w, 404, errors.New("no such appliance"))
 	})
 
+	// Label one signature of an appliance (e.g. "warm-up").
+	mux.HandleFunc("PUT /api/appliances/{id}/signatures/{n}", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.Atoi(r.PathValue("n"))
+		var body struct {
+			Label string `json:"label"`
+		}
+		if err != nil || json.NewDecoder(r.Body).Decode(&body) != nil || len(body.Label) > 80 {
+			writeErr(w, 400, errors.New("label (up to 80 characters) is required"))
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		for i := range s.appliances {
+			a := &s.appliances[i]
+			if a.ID == r.PathValue("id") && n >= 0 && n < len(a.Signatures) {
+				a.Signatures[n].Label = strings.TrimSpace(body.Label)
+				if err := s.saveAppliances(); err != nil {
+					writeErr(w, 500, err)
+					return
+				}
+				writeJSONResponse(w, 200, *a)
+				return
+			}
+		}
+		writeErr(w, 404, errors.New("no such appliance or signature"))
+	})
+
+	// Move one signature to another (existing or new) appliance.
+	mux.HandleFunc("POST /api/appliances/{id}/signatures/{n}/move", func(w http.ResponseWriter, r *http.Request) {
+		n, err := strconv.Atoi(r.PathValue("n"))
+		var body struct {
+			Name string `json:"name"`
+		}
+		if err != nil || json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.Name) == "" {
+			writeErr(w, 400, errors.New("name is required"))
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		a, err := s.moveSignature(r.PathValue("id"), n, strings.TrimSpace(body.Name))
+		if err != nil {
+			writeErr(w, 404, err)
+			return
+		}
+		if err := s.saveAppliances(); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		s.mqtt.appliancesChanged()
+		writeJSONResponse(w, 200, a)
+	})
+
 	// Remove one signature from an appliance (the appliance goes when its last one does).
 	mux.HandleFunc("DELETE /api/appliances/{id}/signatures/{n}", func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.Atoi(r.PathValue("n"))
