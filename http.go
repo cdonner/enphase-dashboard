@@ -250,8 +250,10 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			}
 			list = append(list, n)
 		}
+		clusters, groups := s.clustersAndGroups()
 		writeJSONResponse(w, 200, map[string]any{
-			"appliances": list, "unnamed": s.clusters(), "aiProviders": aiProviders(), "household": s.settings.Household,
+			"appliances": list, "unnamed": clusters, "groups": groups, "aiProviders": aiProviders(),
+			"household": s.settings.Household,
 		})
 	}))
 

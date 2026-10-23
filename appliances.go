@@ -17,7 +17,7 @@ import (
 
 const (
 	activityGap = 20 * time.Minute // repeats of one signature closer than this are one activity
-	clusterDays = 7                // unnamed runs from this many days are clustered
+	clusterDays = 14               // unnamed runs from this many days are clustered
 	matchTolPct = 0.15             // signatures match within 15% per leg...
 	matchTolW   = 25.0             // ...or 25 W, whichever is larger,
 	// Reactive/real power ratios (character) must agree within matchTolRatio + matchTolRatioW/P:
@@ -65,6 +65,7 @@ func (s *Server) migrateAppliances() {
 // addSignature names a signature: it joins the appliance with that name (case-insensitive)
 // or creates one. Caller holds s.mu.
 func (s *Server) addSignature(name string, sig Sig) Appliance {
+	s.clusterCache.at = 0
 	for i := range s.appliances {
 		a := &s.appliances[i]
 		if strings.EqualFold(a.Name, name) {
@@ -183,13 +184,21 @@ type dayRuns struct {
 	Runs []Run `json:"runs"`
 }
 
-// loadDayRuns returns the stored runs of a day. Caller holds s.mu.
+// loadDayRuns returns the stored runs of a day. Past days are kept in memory after the
+// first read. Caller holds s.mu.
 func (s *Server) loadDayRuns(date string) []Run {
 	if date == s.events.date {
 		return s.events.runs
 	}
+	if runs, ok := s.pastDays[date]; ok {
+		return runs
+	}
 	var d dayRuns
 	s.readJSON("events/"+date+".json", &d)
+	if s.pastDays == nil || len(s.pastDays) > 2*clusterDays {
+		s.pastDays = map[string][]Run{}
+	}
+	s.pastDays[date] = d.Runs
 	return d.Runs
 }
 
@@ -210,8 +219,9 @@ func (s *Server) recordRuns(runs []Run) {
 			continue
 		}
 		// Started on an earlier day (e.g. ran past midnight): append to that day's file.
-		old := dayRuns{Runs: s.loadDayRuns(date)}
+		old := dayRuns{Runs: append([]Run{}, s.loadDayRuns(date)...)}
 		old.Runs = append(old.Runs, r)
+		delete(s.pastDays, date)
 		if err := s.writeJSON("events/"+date+".json", old, 0o644); err != nil {
 			s.logf("Saving events: %v", err)
 		}
@@ -234,6 +244,7 @@ func (s *Server) persistEvents() {
 }
 
 func (s *Server) saveAppliances() error {
+	s.clusterCache.at = 0 // names changed: recompute
 	return s.writeJSON(appliancesFile, s.appliances, 0o644)
 }
 
@@ -265,6 +276,7 @@ func (s *Server) matchSignature(dp, dq []float64) (*Appliance, int) {
 // moveSignature takes signature n off appliance id and names it `name` (an existing
 // appliance or a new one). An appliance left without signatures is removed. Caller holds s.mu.
 func (s *Server) moveSignature(id string, n int, name string) (Appliance, error) {
+	s.clusterCache.at = 0
 	for i := range s.appliances {
 		a := &s.appliances[i]
 		if a.ID != id || n < 0 || n >= len(a.Signatures) {
@@ -386,6 +398,9 @@ type Cluster struct {
 	MedianGapSec float64 `json:"medianGapSec"` // typical time between runs (0 if unknown)
 	// Named appliances that started within a few seconds of this signature's runs.
 	With []CoStart `json:"with"`
+	// How it repeats, and how it relates to other signatures and named appliances.
+	Pattern Pattern    `json:"pattern"`
+	Related []Relation `json:"related"`
 }
 
 type CoStart struct {
@@ -409,8 +424,26 @@ func clusterKey(dp []float64) string {
 }
 
 // clusters groups the unnamed runs of the last clusterDays days by signature (greedy:
-// each run joins the first cluster whose centroid it matches). Caller holds s.mu.
+// each run joins the first cluster whose centroid it matches), and analyzes how they
+// repeat and relate to each other and to named appliances. Caller holds s.mu.
 func (s *Server) clusters() []Cluster {
+	c, _ := s.clustersAndGroups()
+	return c
+}
+
+const clusterCacheFor = time.Minute
+
+// clustersAndGroups is cached for a minute; the analysis covers two weeks of runs.
+func (s *Server) clustersAndGroups() ([]Cluster, []Group) {
+	if s.clusterCache.at > 0 && nowMs()-s.clusterCache.at < clusterCacheFor.Milliseconds() {
+		return s.clusterCache.clusters, s.clusterCache.groups
+	}
+	c, g := s.computeClusters()
+	s.clusterCache.at, s.clusterCache.clusters, s.clusterCache.groups = nowMs(), c, g
+	return c, g
+}
+
+func (s *Server) computeClusters() ([]Cluster, []Group) {
 	type acc struct {
 		dp, dq  []float64
 		n       int
@@ -420,24 +453,25 @@ func (s *Server) clusters() []Cluster {
 		samples []int64
 		starts  []int64
 		hours   [24]int
-		with    map[string]int
+		spans   []span
 	}
 	var groups []*acc
+	named := map[string][]span{}
+	daysWithData := 0
 	for d := 0; d < clusterDays; d++ {
 		date := dayKey(time.Now().AddDate(0, 0, -d))
 		runs := s.loadDayRuns(date)
-		type named struct {
-			start int64
-			name  string
+		if len(runs) > 0 {
+			daysWithData++
 		}
-		var namedStarts []named
 		for _, r := range runs {
-			if a := s.applianceFor(r); a != nil && !a.Ignored {
-				namedStarts = append(namedStarts, named{r.Start, a.Name})
+			if r.End == nil {
+				continue
 			}
-		}
-		for _, r := range runs {
-			if r.End == nil || s.applianceFor(r) != nil {
+			if a := s.applianceFor(r); a != nil {
+				if !a.Ignored {
+					named[a.Name] = append(named[a.Name], span{r.Start, *r.End})
+				}
 				continue
 			}
 			var g *acc
@@ -448,7 +482,7 @@ func (s *Server) clusters() []Cluster {
 				}
 			}
 			if g == nil {
-				g = &acc{dp: append([]float64{}, r.DP...), dq: append([]float64{}, r.DQ...), days: map[string]bool{}, with: map[string]int{}}
+				g = &acc{dp: append([]float64{}, r.DP...), dq: append([]float64{}, r.DQ...), days: map[string]bool{}}
 				groups = append(groups, g)
 			}
 			// Running mean keeps the centroid representative.
@@ -465,16 +499,11 @@ func (s *Server) clusters() []Cluster {
 			}
 			g.starts = append(g.starts, r.Start)
 			g.hours[time.UnixMilli(r.Start).Hour()]++
-			seen := map[string]bool{}
-			for _, n := range namedStarts {
-				if !seen[n.name] && math.Abs(float64(n.start-r.Start)) <= float64(coStartWindow.Milliseconds()) {
-					seen[n.name] = true
-					g.with[n.name]++
-				}
-			}
+			g.spans = append(g.spans, span{r.Start, *r.End})
 		}
 	}
 	out := []Cluster{}
+	var spans [][]span
 	for _, g := range groups {
 		if g.n < minClusterRuns {
 			continue
@@ -495,21 +524,43 @@ func (s *Server) clusters() []Cluster {
 			sort.Float64s(gaps)
 			c.MedianGapSec = gaps[len(gaps)/2]
 		}
-		c.With = []CoStart{}
-		for name, n := range g.with {
-			if n*2 >= g.n { // at least half of its runs
-				c.With = append(c.With, CoStart{name, n})
-			}
-		}
-		sort.Slice(c.With, func(i, j int) bool { return c.With[i].Runs > c.With[j].Runs })
 		if ai, ok := s.aiSuggestions[c.Key]; ok {
 			c.AI = &ai
 		}
 		out = append(out, c)
+		spans = append(spans, g.spans)
 	}
+
+	grp := analyze(out, spans, named, max(daysWithData, 1))
+	for i := range out {
+		out[i].With = []CoStart{}
+		for _, r := range out[i].Related {
+			if r.Named {
+				out[i].With = append(out[i].With, CoStart{r.To, r.Runs})
+			}
+		}
+	}
+
 	sort.Slice(out, func(i, j int) bool { return out[i].EnergyWh > out[j].EnergyWh })
 	if len(out) > maxClusters {
 		out = out[:maxClusters]
 	}
-	return out
+	shown := map[string]bool{}
+	for _, c := range out {
+		shown[c.Key] = true
+	}
+	kept := []Group{}
+	for _, g := range grp {
+		var keys []string
+		for _, k := range g.Keys {
+			if shown[k] {
+				keys = append(keys, k)
+			}
+		}
+		if len(keys) >= 2 {
+			g.Keys = keys
+			kept = append(kept, g)
+		}
+	}
+	return out, kept
 }

@@ -67,8 +67,11 @@ Loads that switch on and off while nobody is using anything are usually equipmen
 its own: furnace or air handler blowers (often several speeds, each a separate signature), inducer
 fans and igniters, refrigerator and freezer compressors and their defrost or ice-maker heaters,
 dehumidifiers, sump or well pumps, water treatment, aquarium or terrarium heaters, heated seats,
-and electronics waking from standby. A signature that starts together with an identified
-appliance is very likely part of it (e.g. another stage or motor of the same furnace). If nothing
+and electronics waking from standby. A signature that starts together with, or runs during,
+an identified appliance is very likely part of it (e.g. another stage or motor of the same
+furnace); signatures that keep appearing together are probably one appliance. Use the repeat
+pattern: regular cycling day and night means automatic equipment, irregular daytime-only use means
+something people switch on. If nothing
 plausible fits, answer with a single guess named "Unknown" and low confidence rather than inventing
 an appliance the owner doesn't have.
 
@@ -133,8 +136,15 @@ func describeForAI(c Cluster, legs int) string {
 		gap = "every " + fmtSeconds(c.MedianGapSec)
 	}
 	with := ""
-	for _, w := range c.With {
-		with += fmt.Sprintf("; starts within %s of %q in %d of its %d runs", coStartWindow, w.Name, w.Runs, c.Runs)
+	for _, r := range c.Related {
+		to := fmt.Sprintf("%q", r.To)
+		if !r.Named {
+			to = fmt.Sprintf("signature %s (%s)", r.To, r.Label)
+		}
+		with += fmt.Sprintf("; %s %s in %d of its %d runs", r.How, to, r.Runs, r.Of)
+	}
+	if c.Pattern.Text != "" {
+		with += "; pattern: " + c.Pattern.Text
 	}
 	return fmt.Sprintf("- key %s: %.0f W step, %s, %s (reactive/real %.2f); %d runs on %d of the last %d days; "+
 		"on for %s typically (range %s-%s); starts %s; energy %s in the period; start counts by hour (hh:count) %s%s",
@@ -277,6 +287,7 @@ func (s *Server) askAI(ctx context.Context, provider string) (map[string]AISugge
 	for _, sig := range out.Signatures {
 		s.aiSuggestions[sig.Key] = AISuggestion{At: now, Source: provider, Model: model, Guesses: sig.Guesses}
 	}
+	s.clusterCache.at = 0
 	if err := s.writeJSON(aiFile, s.aiSuggestions, 0o644); err != nil {
 		return nil, err
 	}

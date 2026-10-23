@@ -195,6 +195,7 @@ func TestChatPrompt(t *testing.T) {
 		s.writeJSON("events/"+day(d)+".json", dayRuns{Runs: []Run{{Start: start, End: &end, DP: []float64{0, 400}, DQ: []float64{0, 4}}}}, 0o644)
 	}
 	s.settings.Household = "Drip coffee maker in the kitchen."
+	s.clusterCache.at, s.pastDays = 0, nil // files were written behind the caches' back
 	p, err := s.chatPrompt()
 	if err != nil {
 		t.Fatal(err)
@@ -423,7 +424,7 @@ func TestCoStartsAndIgnore(t *testing.T) {
 	if heater == nil || len(heater.With) != 0 {
 		t.Errorf("heater should have no co-starts: %+v", heater)
 	}
-	if !strings.Contains(describeForAI(*motor, 2), `starts within 15s of "Furnace" in 3 of its 3 runs`) {
+	if !strings.Contains(describeForAI(*motor, 2), `starts with "Furnace" in 3 of its 3 runs`) {
 		t.Errorf("AI description: %s", describeForAI(*motor, 2))
 	}
 

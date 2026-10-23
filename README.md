@@ -356,7 +356,7 @@ Steps up and down are paired into runs. Run times show on a timeline for each da
 runs of the same appliance are grouped. If an appliance switches off in stages, such as a sauna heater
 turning off one element at a time, each stage is split off its run.
 
-**Naming appliances.** *Needs a name* lists the unnamed signatures of the last 7 days, most energy
+**Naming appliances.** *Needs a name* lists the unnamed signatures of the last 14 days, most energy
 first, so you can name them in batches. You can also click a bar on the timeline and name it there.
 Many appliances have several signatures (a laser printer's warm-up, fuser and paper motor; a dryer's
 element and drum motor; each stage of a sauna heater). Give them the same name and they become one
@@ -375,10 +375,16 @@ things help:
 
 - **Size filter.** *Show unnamed loads from* (default 150 W) hides smaller unnamed runs and
   signatures. Named appliances always show.
-- **Starts together with.** When a signature usually starts within 15 seconds of a named appliance,
-  its card says so, e.g. *starts together with Furnace in 3 of 3 runs*. That usually means it's
-  another part of the same appliance (a second blower speed, an inducer fan, an igniter), so give it
-  the same name.
+- **Relations and groups.** The dashboard compares every signature with every other one and with
+  the named appliances over the last 14 days. It counts how often they *start together* (within 15
+  seconds) and how often one *runs during* the other, like an igniter during a furnace's blower run.
+  A card shows e.g. *runs during the 485 W motor in 63 of 63 runs*. Unnamed signatures that keep
+  appearing together are offered as **Probably one appliance**, to name in one go. Requiring most
+  runs of *both* to coincide keeps chance overlaps out, e.g. a fridge that happens to cycle during a
+  long EV charge.
+- **Patterns.** Each card says how a signature repeats. Regular cycling, or runs at night, marks it
+  *automatic*: thermostat, compressor, pump. Irregular, daytime-only use marks it *operated*:
+  something people switch on. The relations and patterns also go into the AI prompt.
 - **Ignore.** Hides a signature from the timeline and the naming list. Ignored signatures are listed
   under *Known appliances*, where you can show them again.
 

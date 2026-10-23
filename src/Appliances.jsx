@@ -284,6 +284,55 @@ function NameForm({ placeholder = 'Name, or pick an existing appliance', initial
   );
 }
 
+const describeCluster = (c) =>
+  `${fmtW(c.signature.powerW)} ${c.signature.legs.replace('120 V · ', '')} ${c.signature.character}`;
+
+// Unnamed signatures that keep appearing together: probably one appliance.
+function Groups({ groups, byKey, onChanged }) {
+  const usable = (groups ?? []).map((g) => g.keys.map((k) => byKey[k]).filter(Boolean)).filter((m) => m.length >= 2);
+  if (!usable.length) return null;
+  const post = (body) => api('/appliances', { method: 'POST', body });
+  return (
+    <div className="groups">
+      <h3>Probably one appliance</h3>
+      <p className="muted small">These signatures keep appearing together. Name them in one go.</p>
+      {usable.map((members) => (
+        <div className="cluster group" key={members.map((m) => m.key).join('+')}>
+          <ul className="group-members">
+            {members.map((m) => (
+              <li key={m.key}>
+                <span className="rect-key" style={{ background: typeOf(m.signature.legs).color }} />
+                <strong>{fmtW(m.signature.powerW)}</strong>{' '}
+                <span className="muted small">
+                  {m.signature.legs} · {m.signature.character} · {m.runs} {m.runs === 1 ? 'run' : 'runs'} · ID {m.key}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="row name-row">
+            <NameForm
+              button="Name all"
+              onSave={async (name) => {
+                for (const m of members) await post({ name, dp: m.signature.dp, dq: m.signature.dq });
+                onChanged();
+              }}
+            />
+            <button
+              className="ghost"
+              onClick={async () => {
+                for (const m of members) await post({ ignore: true, dp: m.signature.dp, dq: m.signature.dq });
+                onChanged();
+              }}
+            >
+              Ignore all
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Unnamed({ clusters, onChanged }) {
   if (!clusters?.length)
     return (
@@ -355,17 +404,28 @@ function Unnamed({ clusters, onChanged }) {
               ))}
             </div>
           )}
-          {c.with?.length > 0 && (
-            <div className="small co-start">
-              Starts together with{' '}
-              {c.with.map((w, i) => (
-                <span key={w.name}>
-                  {i > 0 && ', '}
-                  <strong>{w.name}</strong> in {w.runs} of {c.runs} runs
-                </span>
-              ))}
-              . Probably part of it: give it the same name.
+          {c.pattern?.text && (
+            <div className="small pattern">
+              {c.pattern.kind && <span className={`kind ${c.pattern.kind}`}>{c.pattern.kind}</span>} {c.pattern.text}
             </div>
+          )}
+          {c.related?.length > 0 && (
+            <ul className="small co-start">
+              {c.related.slice(0, 4).map((r) => (
+                <li key={r.to}>
+                  {r.how === 'runs during' ? 'Runs during' : 'Starts with'}{' '}
+                  {r.named ? (
+                    <strong>{r.to}</strong>
+                  ) : (
+                    <>
+                      the <strong>{r.label}</strong> (ID {r.to})
+                    </>
+                  )}{' '}
+                  in {r.runs} of {r.of} runs
+                </li>
+              ))}
+              {c.related.some((r) => r.named) && <li className="muted">Probably part of it: give it the same name.</li>}
+            </ul>
           )}
           <div className="muted small">
             e.g.{' '}
@@ -798,12 +858,17 @@ export default function Appliances() {
         <section className="card">
           <h2>Needs a name</h2>
           <p className="muted small">
-            Signatures from the last 7 days, most energy first. Naming one labels all of its runs, past and future. Give
-            several signatures the same name to group them into one appliance.
+            Signatures from the last 14 days, most energy first. Naming one labels all of its runs, past and future.
+            Give several signatures the same name to group them into one appliance.
           </p>
           {lists.data && (
             <AskAI providers={lists.data.aiProviders} household={lists.data.household} onChanged={reload} />
           )}
+          <Groups
+            groups={lists.data?.groups}
+            byKey={Object.fromEntries(allClusters.map((c) => [c.key, c]))}
+            onChanged={reload}
+          />
           <Unnamed clusters={clusters} onChanged={reload} />
           {allClusters.length > clusters.length && (
             <p className="muted small">

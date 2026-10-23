@@ -92,7 +92,13 @@ type Server struct {
 	}
 	appliances    []Appliance
 	aiSuggestions map[string]AISuggestion // cluster key -> last AI answer
-	inverters     struct {
+	pastDays      map[string][]Run        // runs of past days, read once
+	clusterCache  struct {
+		at       int64
+		clusters []Cluster
+		groups   []Group
+	}
+	inverters struct {
 		at   int64
 		data json.RawMessage
 	}
