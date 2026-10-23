@@ -4,3 +4,8 @@ data/
 .env
 token.txt
 /enphase-dashboard
+sql.txt
+homeassistant.txt
+*.creds
+*.env
+!.env.example

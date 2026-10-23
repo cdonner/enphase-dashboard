@@ -449,6 +449,39 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		writeErr(w, 404, errors.New("no such appliance"))
 	})
 
+	// Raw per-second leg readings (diagnostics): ?from=&to= in ms (at most 6 h),
+	// &format=tsv for "time P1 P2 ... Q1 Q2 ..." lines.
+	mux.HandleFunc("GET /api/debug/raw", authed(func(w http.ResponseWriter, r *http.Request) {
+		from, err1 := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+		to, err2 := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
+		if err1 != nil || err2 != nil {
+			writeErr(w, 400, errors.New("from and to (unix ms) are required"))
+			return
+		}
+		samples, err := s.rawSamples(from, to)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		if r.URL.Query().Get("format") == "tsv" {
+			w.Header().Set("Content-Type", "text/tab-separated-values")
+			writeRaw(w, samples)
+			return
+		}
+		rows := make([][]float64, len(samples))
+		for i, x := range samples {
+			row := []float64{float64(x.At)}
+			for _, v := range x.P {
+				row = append(row, float64(v))
+			}
+			for _, v := range x.Q {
+				row = append(row, float64(v))
+			}
+			rows[i] = row
+		}
+		writeJSONResponse(w, 200, map[string]any{"columns": "time, P per leg, Q per leg", "samples": rows})
+	}))
+
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()

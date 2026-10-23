@@ -84,7 +84,8 @@ type Server struct {
 	settings    Settings
 	rates       rateFile // cached rates.csv
 	detector    *Detector
-	lastReading int64 // gateway timestamp of the last reading fed to the detector
+	raw         *rawRecorder // per-second leg readings, for diagnosing the detector
+	lastReading int64        // gateway timestamp of the last reading fed to the detector
 	events      struct {
 		date  string
 		runs  []Run
@@ -125,6 +126,7 @@ func NewServer(cfg Config) *Server {
 		aiSuggestions: map[string]AISuggestion{},
 	}
 	s.cloud = NewCloud(s)
+	s.raw = newRawRecorder(cfg.DataDir, s.logf)
 	if cfg.MQTT.URL != "" {
 		s.mqtt = NewMQTT(s, cfg.MQTT)
 	}
@@ -573,6 +575,7 @@ func (s *Server) sampleOnce() error {
 	s.meters, s.pdm = meters, pdm
 	if smp.NetW != nil && len(legP) > 0 && readingTs > s.lastReading {
 		s.lastReading = readingTs
+		s.raw.add(readingTs*1000, legP, legQ)
 		s.detector.Add(readingTs*1000, legP, legQ)
 		if closed := s.detector.drainClosed(); len(closed) > 0 {
 			s.recordRuns(closed)

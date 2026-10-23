@@ -102,6 +102,12 @@ func loadConfig() Config {
 
 func main() {
 	log.SetFlags(log.LstdFlags)
+	if len(os.Args) > 2 && os.Args[1] == "replay" {
+		if err := replay(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	cfg := loadConfig()
 	// Re-read TZ after .env: time.Local is initialized before main runs.
 	if tz := os.Getenv("TZ"); tz != "" {

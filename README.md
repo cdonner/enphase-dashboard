@@ -506,6 +506,27 @@ State is published every 10 seconds as retained JSON on `enphase_dashboard/state
 base topic with `MQTT_TOPIC`, and the discovery prefix with `HA_DISCOVERY_PREFIX` (default
 `homeassistant`).
 
+### Diagnostics: raw readings and replay
+
+To find out why an appliance was or wasn't detected, the dashboard keeps the per-second readings
+the detector works from: real and reactive power per leg, after subtracting solar. They are kept
+for 48 hours in memory and as hourly files in `data/raw/<date>/<hour>.tsv.gz` for 7 days (about
+2 MB a day). Get a stretch (at most 6 hours) with
+
+```bash
+curl "http://<host>:3001/api/debug/raw?from=<unix ms>&to=<unix ms>&format=tsv" > cycle.tsv
+```
+
+and replay it through the detector to see which runs it finds:
+
+```bash
+enphase-dashboard replay cycle.tsv          # or data/raw/2026-10-23/11.tsv.gz
+```
+
+Each line is `time(ms)  P per leg  Q per leg`. Comparing this with an independent record of when
+an appliance ran (a thermostat's heating periods, a temperature logger in a heating duct) is the
+most reliable way to improve detection.
+
 ## Data and security
 
 Everything is stored in the data directory (`DATA_DIR`):
@@ -517,7 +538,8 @@ Everything is stored in the data directory (`DATA_DIR`):
 | `cloud.json` | Enphase cloud OAuth tokens (mode 600) |
 | `settings.json`, `rates.csv` | Electricity rates (`rates.csv` is optional, see [Rate file](#rate-file)) |
 | `appliances.json`, `ai-suggestions.json` | Appliance names and signatures, last AI suggestions |
-| `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/`, `events/` | Recorded data |
+| `daily.json`, `history/`, `cloud-daily.json`, `ev.json`, `ev-days/`, `events/`, `detector.json` | Recorded data |
+| `raw/` | Per-second leg readings for diagnostics, kept 7 days |
 
 Tokens and passwords never reach the browser. The dashboard has no user accounts, though, so
 anyone who can reach it can view your data and change the gateway token. Set `DASHBOARD_PASSWORD`
@@ -527,7 +549,7 @@ when it listens on anything other than localhost, and don't expose it to the int
 
 The server's JSON endpoints, which you can use in your own scripts: `/api/status`, `/api/live`,
 `/api/today`, `/api/daily?days=N`, `/api/inverters`, `/api/ev`, `/api/appliances` and
-`/api/appliances/day?date=YYYY-MM-DD`, and `/api/settings` (GET and PUT).
+`/api/appliances/day?date=YYYY-MM-DD`, `/api/settings` (GET and PUT), and `/api/debug/raw`.
 
 ## License
 
