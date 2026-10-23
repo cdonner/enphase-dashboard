@@ -170,3 +170,12 @@ a { color: var(--accent); }
 .rate-input { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
 .rate-input input { width: 100px; }
 .card-head .row { align-items: center; }
+.table-scroll { overflow-x: auto; }
+.ev-table td, .ev-table th { white-space: nowrap; }
+@media (max-width: 600px) {
+  .wide-only { display: none; }
+  .data-table th, .data-table td { padding: 4px 5px; }
+  .ev-tiles { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .ev-tiles .tile { padding: 10px; }
+  .ev-tiles .tile-value { font-size: 18px; }
+}

@@ -30,7 +30,7 @@ function Card({ title, subtitle, legend, table, children, className = '' }) {
       {table && (
         <details className="table-view">
           <summary>Table</summary>
-          {table}
+          <div className="table-scroll">{table}</div>
         </details>
       )}
     </section>
