@@ -187,10 +187,7 @@ report on the EV charger. With a free Enphase developer account the dashboard ca
 - show full daily totals for days it wasn't running,
 - show IQ EV Charger sessions, with the share of each session that came from solar.
 
-In the EV card, **Electricity rates** takes your rate per month from your utility bill. Each session
-is then valued at kWh × that month's rate, i.e. what it would cost at normal rates. Until rates are set,
-the card shows Enphase's own cost figure, which uses the tariff in the Enphase app and counts solar
-as free.
+See [EV charging value](#ev-charging-value) for pricing the sessions.
 
 Setup:
 
@@ -204,6 +201,36 @@ The Watt plan allows about 10 calls per minute and 1,000 per month. The dashboar
 month: daily totals once a day, today's backfill at most once a day, EV sessions every 3 hours, and
 3 calls for each day with charging, to work out the solar share.
 Access tokens refresh themselves, provided the server runs at least once a month.
+
+## EV charging value
+
+The EV card values each charging session at **what it would have cost at your normal electricity
+rate**: session kWh × the rate for the month the session started. It also shows how much of each
+session your panels supplied (the *Solar* column), but solar doesn't change the value. Both need the
+[Enphase cloud](#enphase-cloud-optional) connection, because the charger only reports to the cloud.
+
+To set your rates:
+
+1. Click **Electricity rates** in the EV card.
+2. Click **Add month**, pick the month, and enter the rate in $/kWh. For the effective rate from a
+   bill, divide the total charges by the kWh billed, e.g. $394.62 / 1,712 kWh = $0.2305.
+3. Add as many months as you like, then click **Save rates**.
+
+A month without an entry uses the most recent earlier month's rate, so one entry is enough if your
+rate rarely changes. Months before your first entry use the earliest rate you entered. Until you set
+any rates, the card shows Enphase's own cost figure, marked with `*`. That figure is based on the
+tariff in the Enphase app and counts solar energy as free.
+
+Rates are stored in `settings.json` in the data directory. You can also set them with the API, for
+example from a script that reads your utility bills:
+
+```bash
+curl -X PUT http://<host>:3001/api/settings -H 'Content-Type: application/json' \
+  -d '{"rates": {"2026-08": 0.2306, "2026-09": 0.2305}}'
+```
+
+The request replaces all rates, so include every month you want to keep. If you set
+`DASHBOARD_PASSWORD`, add `-u any:<password>`.
 
 ## Data and security
 
@@ -224,7 +251,7 @@ when it listens on anything other than localhost, and don't expose it to the int
 ## API
 
 The server's JSON endpoints, which you can use in your own scripts: `/api/status`, `/api/live`,
-`/api/today`, `/api/daily?days=N`, `/api/inverters`, `/api/ev`.
+`/api/today`, `/api/daily?days=N`, `/api/inverters`, `/api/ev`, and `/api/settings` (GET and PUT).
 
 ## License
 
