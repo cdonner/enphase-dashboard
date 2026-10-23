@@ -53,6 +53,22 @@ function Timeline({ date, activities, onName }) {
 
   const t0 = new Date(`${date}T00:00:00`).getTime();
   const pct = (t) => `${Math.min(100, Math.max(0, ((t - t0) / 86_400_000) * 100))}%`;
+  // The run in row r closest in time to the pointer.
+  const nearest = (r, e) => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const t = t0 + ((e.clientX - box.left) / box.width) * 86_400_000;
+    let best = null;
+    let bestDist = Infinity;
+    for (const sp of r.spans) {
+      const dist = t < sp.s[0] ? sp.s[0] - t : t > sp.s[1] ? t - sp.s[1] : 0;
+      if (dist < bestDist) [best, bestDist] = [sp, dist];
+    }
+    return best && { r, ...best };
+  };
+  const latest = (r) => {
+    const sp = r.spans.reduce((x, y) => (y.s[0] > x.s[0] ? y : x));
+    return { r, ...sp };
+  };
   if (!rows.length) return <p className="muted">No appliance activity detected for this day yet.</p>;
 
   return (
@@ -66,11 +82,21 @@ function Timeline({ date, activities, onName }) {
       </div>
       {rows.map((r) => (
         <div className="tl-row" key={r.key}>
-          <div className="tl-label" title={r.label}>
+          <button
+            className="tl-label"
+            title={`${r.label} - click to select its latest run`}
+            onClick={() => setSelected(latest(r))}
+          >
             <span className="rect-key" style={{ background: r.type.color }} />
             <span className={r.named ? '' : 'muted'}>{r.label}</span>
-          </div>
-          <div className="tl-track">
+          </button>
+          {/* The whole track is the hit target: runs are often only a few pixels wide. */}
+          <div
+            className="tl-track"
+            onPointerMove={(e) => setHover(nearest(r, e))}
+            onPointerLeave={() => setHover(null)}
+            onClick={(e) => setSelected(nearest(r, e))}
+          >
             {r.spans.map(({ s, a }, i) => (
               <span
                 key={i}
@@ -81,11 +107,8 @@ function Timeline({ date, activities, onName }) {
                   width: `max(2px, calc(${pct(s[1])} - ${pct(s[0])}))`,
                   background: r.type.color,
                 }}
-                onPointerEnter={() => setHover({ r, s, a })}
-                onPointerLeave={() => setHover(null)}
                 onFocus={() => setHover({ r, s, a })}
                 onBlur={() => setHover(null)}
-                onClick={() => setSelected({ r, s, a })}
                 onKeyDown={(e) => e.key === 'Enter' && setSelected({ r, s, a })}
               />
             ))}
