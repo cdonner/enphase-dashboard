@@ -152,6 +152,9 @@ function Unnamed({ clusters, onChanged }) {
             <span className="muted">
               {c.signature.legs} · {c.signature.character}
             </span>
+            <span className="muted small cluster-id" title="ID used in the AI prompt">
+              ID {c.key}
+            </span>
           </div>
           <div className="muted small">
             {c.runs} runs on {c.days} {c.days === 1 ? 'day' : 'days'} · typically on {fmtDur(c.medianOnSec)} ·{' '}
@@ -219,31 +222,49 @@ function Unnamed({ clusters, onChanged }) {
   );
 }
 
-function AskAI({ enabled, household, onChanged }) {
+function AskAI({ enabled, model, household, onChanged }) {
   const [text, setText] = useState(household ?? '');
   const [saved, setSaved] = useState(household ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [savedAt, setSavedAt] = useState(null);
+  const [note, setNote] = useState(null);
+  const [manual, setManual] = useState(null); // prompt to copy by hand when the clipboard isn't available
 
   async function saveHousehold() {
     await api('/household', { method: 'PUT', body: { household: text } });
     setSaved(text);
-    setSavedAt(Date.now());
   }
-  async function ask() {
+  async function run(fn) {
     setBusy(true);
     setError(null);
+    setNote(null);
     try {
       if (text !== saved) await saveHousehold();
-      await api('/appliances/ask-ai', { method: 'POST' });
-      onChanged();
+      await fn();
     } catch (e) {
       setError(e.message);
     } finally {
       setBusy(false);
     }
   }
+  const copyPrompt = () =>
+    run(async () => {
+      const { prompt } = await api('/appliances/ai-prompt');
+      try {
+        await navigator.clipboard.writeText(prompt); // needs https or localhost
+        setManual(null);
+        setNote(
+          'Copied. Paste it into a chat with Claude (or another assistant), then name the signatures it identifies.',
+        );
+      } catch {
+        setManual(prompt);
+      }
+    });
+  const askApi = () =>
+    run(async () => {
+      await api('/appliances/ask-ai', { method: 'POST' });
+      onChanged();
+    });
 
   return (
     <div className="ask-ai">
@@ -251,7 +272,7 @@ function AskAI({ enabled, household, onChanged }) {
         <summary>About your home</summary>
         <p className="muted small">
           List your larger appliances and anything unusual: what runs on gas, what's off for the season, sizes you know.
-          This is sent with the AI request as context.
+          It's included in the AI prompt as context.
         </p>
         <textarea
           rows={5}
@@ -260,22 +281,35 @@ function AskAI({ enabled, household, onChanged }) {
           placeholder="e.g. Gas water heater and 2 gas furnaces (blowers are electric). 6 kW sauna heater with 3 stages. Drip coffee maker. Pool pump off for winter."
         />
         <div className="row">
-          <button className="ghost" disabled={text === saved} onClick={saveHousehold}>
+          <button className="ghost" disabled={text === saved} onClick={() => run(saveHousehold)}>
             Save
           </button>
-          {savedAt && text === saved && <span className="muted small">Saved</span>}
         </div>
       </details>
       <div className="row ai-row">
-        <button disabled={!enabled || busy} onClick={ask}>
-          {busy ? 'Asking Claude…' : 'Ask AI to identify'}
+        <button disabled={busy} onClick={copyPrompt}>
+          Copy prompt for AI chat
         </button>
-        <span className="muted small">
-          {enabled
-            ? 'Sends only summary numbers per signature and the text above to Claude.'
-            : 'Set ANTHROPIC_API_KEY on the server to enable AI suggestions (see the README).'}
-        </span>
+        <a className="small" href="https://claude.ai/new" target="_blank" rel="noreferrer">
+          Open claude.ai
+        </a>
+        {enabled && (
+          <button className="ghost" disabled={busy} onClick={askApi} title={`Uses the Claude API (${model})`}>
+            {busy ? 'Asking…' : 'Ask Claude API'}
+          </button>
+        )}
       </div>
+      <p className="muted small">
+        The prompt holds only summary numbers per signature and the text above, no readings or location.
+        {enabled ? ` "Ask Claude API" shows the answers right here (model ${model}).` : ''}
+      </p>
+      {note && <p className="small">{note}</p>}
+      {manual && (
+        <div className="manual-copy">
+          <p className="small">Your browser blocked the clipboard on this address. Select all and copy:</p>
+          <textarea rows={8} readOnly value={manual} onFocus={(e) => e.target.select()} />
+        </div>
+      )}
       {error && <p className="error">{error}</p>}
     </div>
   );
@@ -443,7 +477,14 @@ export default function Appliances() {
             Signatures that repeated over the last 7 days, most energy first. Naming one labels all of its runs, past
             and future.
           </p>
-          {lists.data && <AskAI enabled={lists.data.aiEnabled} household={lists.data.household} onChanged={reload} />}
+          {lists.data && (
+            <AskAI
+              enabled={lists.data.aiEnabled}
+              model={lists.data.aiModel}
+              household={lists.data.household}
+              onChanged={reload}
+            />
+          )}
           <Unnamed clusters={lists.data?.unnamed} onChanged={reload} />
         </section>
         <section className="card">

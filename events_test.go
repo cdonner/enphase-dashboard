@@ -4,6 +4,7 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
 
 // feed runs a per-second sequence of per-leg power levels through a detector.
@@ -162,5 +163,29 @@ func TestAskAIWithoutKey(t *testing.T) {
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 	if _, err := NewServer(Config{DataDir: t.TempDir()}).askAI(t.Context()); err == nil {
 		t.Error("expected an error without an API key")
+	}
+}
+
+func TestChatPrompt(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	if _, err := s.chatPrompt(); err == nil {
+		t.Error("expected an error with no signatures")
+	}
+	// Two days of the same 400 W run -> one cluster in the prompt.
+	day := func(d int) string { return dayKey(time.Now().AddDate(0, 0, -d)) }
+	for d := 0; d < 2; d++ {
+		start := startOfDay(time.Now().AddDate(0, 0, -d)).UnixMilli() + 8*3_600_000
+		end := start + 3000
+		s.writeJSON("events/"+day(d)+".json", dayRuns{Runs: []Run{{Start: start, End: &end, DP: []float64{0, 400}, DQ: []float64{0, 4}}}}, 0o644)
+	}
+	s.settings.Household = "Drip coffee maker in the kitchen."
+	p, err := s.chatPrompt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Drip coffee maker in the kitchen.", "400 W step", "For each key"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt missing %q:\n%s", want, p)
+		}
 	}
 }

@@ -247,7 +247,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 			list = append(list, named{a, describe(a.DP, a.DQ)})
 		}
 		writeJSONResponse(w, 200, map[string]any{
-			"appliances": list, "unnamed": s.clusters(), "aiEnabled": aiEnabled(), "household": s.settings.Household,
+			"appliances": list, "unnamed": s.clusters(), "aiEnabled": aiEnabled(), "aiModel": aiModel(), "household": s.settings.Household,
 		})
 	}))
 
@@ -289,6 +289,16 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		s.settings = st
 		writeJSONResponse(w, 200, map[string]bool{"ok": true})
 	})
+
+	// The same request as text, for pasting into a chat app instead of using the API.
+	mux.HandleFunc("GET /api/appliances/ai-prompt", authed(func(w http.ResponseWriter, r *http.Request) {
+		text, err := s.chatPrompt()
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSONResponse(w, 200, map[string]string{"prompt": text})
+	}))
 
 	mux.HandleFunc("POST /api/appliances/ask-ai", authed(func(w http.ResponseWriter, r *http.Request) {
 		res, err := s.askAI(r.Context())

@@ -222,3 +222,6 @@ button.chip { padding: 2px 10px; border-radius: 999px; font-size: 13px; }
 .ai-guess { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .confidence { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--text-secondary); }
 .confidence.high { border-color: #0ca30c; }
+.manual-copy textarea { width: 100%; font: 12px ui-monospace, monospace; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); }
+.ai-row a { align-self: center; }
+.cluster-id { margin-left: auto; font-variant-numeric: tabular-nums; }

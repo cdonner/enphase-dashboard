@@ -18,7 +18,9 @@ import (
 )
 
 const (
-	aiModel          = "claude-opus-5-5"
+	// Claude Haiku 5.5 keeps a request at a fraction of a cent; AI_MODEL overrides it
+	// (e.g. claude-opus-5-5 for the most capable model).
+	defaultAIModel   = "claude-haiku-5-5"
 	aiFile           = "ai-suggestions.json"
 	aiMaxClusters    = 15
 	aiRequestTimeout = 3 * time.Minute
@@ -119,10 +121,17 @@ func describeForAI(c Cluster, legs int) string {
 		gap = "every " + fmtSeconds(c.MedianGapSec)
 	}
 	return fmt.Sprintf("- key %s: %.0f W step, %s, %s (reactive/real %.2f); %d runs on %d of the last %d days; "+
-		"on for %s typically (range %s-%s); starts %s; energy %.2f kWh in the period; start counts by hour (hh:count) %s",
+		"on for %s typically (range %s-%s); starts %s; energy %s in the period; start counts by hour (hh:count) %s",
 		c.Key, c.Signature.PowerW, c.Signature.Legs, c.Signature.Character, reactiveRatio(c.Signature),
 		c.Runs, c.Days, clusterDays, fmtSeconds(c.MedianOnSec), fmtSeconds(c.ShortOnSec), fmtSeconds(c.LongOnSec),
-		gap, c.EnergyWh/1000, strings.Join(hours, " "))
+		gap, fmtEnergy(c.EnergyWh), strings.Join(hours, " "))
+}
+
+func fmtEnergy(wh float64) string {
+	if wh < 1000 {
+		return fmt.Sprintf("%.0f Wh", wh)
+	}
+	return fmt.Sprintf("%.2f kWh", wh/1000)
 }
 
 func reactiveRatio(s Signature) float64 {
@@ -136,11 +145,11 @@ func reactiveRatio(s Signature) float64 {
 	return math.Abs(q / s.PowerW)
 }
 
-// askAI requests suggestions for the unnamed clusters and stores them.
-func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
-	if !aiEnabled() {
-		return nil, errors.New("set ANTHROPIC_API_KEY (or workload identity federation variables) to enable AI suggestions")
-	}
+func aiModel() string { return env("AI_MODEL", defaultAIModel) }
+
+// aiPrompt builds the request: household description, appliances already named, and
+// the unnamed signatures. Used for the API call and for pasting into a chat app.
+func (s *Server) aiPrompt() (string, error) {
 	s.mu.Lock()
 	clusters := s.clusters()
 	household := strings.TrimSpace(s.settings.Household)
@@ -155,7 +164,7 @@ func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
 	s.mu.Unlock()
 
 	if len(clusters) == 0 {
-		return nil, errors.New("no unnamed signatures to identify yet")
+		return "", errors.New("no unnamed signatures to identify yet")
 	}
 	if len(clusters) > aiMaxClusters {
 		clusters = clusters[:aiMaxClusters]
@@ -172,25 +181,53 @@ func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
 	for _, c := range clusters {
 		b.WriteString(describeForAI(c, legs) + "\n")
 	}
+	return b.String(), nil
+}
+
+// chatPrompt is the same request as plain text, for pasting into a chat app
+// (e.g. the free claude.ai) instead of using the API.
+func (s *Server) chatPrompt() (string, error) {
+	prompt, err := s.aiPrompt()
+	if err != nil {
+		return "", err
+	}
+	return aiSystem + "\n\n" + prompt +
+		"\nFor each key, list your guesses with confidence and reason. Use the key so I can find the signature on my dashboard.\n", nil
+}
+
+// askAI requests suggestions for the unnamed clusters through the API and stores them.
+func (s *Server) askAI(ctx context.Context) (map[string]AISuggestion, error) {
+	if !aiEnabled() {
+		return nil, errors.New("set ANTHROPIC_API_KEY (or workload identity federation variables) to enable AI suggestions")
+	}
+	prompt, err := s.aiPrompt()
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, aiRequestTimeout)
 	defer cancel()
-	client := anthropic.NewClient()
-	resp, err := client.Beta.Messages.New(ctx, anthropic.BetaMessageNewParams{
-		Model:     aiModel,
+	model := aiModel()
+	params := anthropic.BetaMessageNewParams{
+		Model:     model,
 		MaxTokens: 16000,
 		System:    []anthropic.BetaTextBlockParam{{Text: aiSystem}},
 		Messages: []anthropic.BetaMessageParam{
-			anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(b.String())),
+			anthropic.NewBetaUserMessage(anthropic.NewBetaTextBlock(prompt)),
 		},
 		OutputConfig: anthropic.BetaOutputConfigParam{
 			Effort: anthropic.BetaOutputConfigEffortMedium,
 			Format: anthropic.BetaJSONOutputFormatParam{Schema: aiSchema},
 		},
+	}
+	if !strings.Contains(model, "haiku") {
 		// If a safety classifier declines, the API re-runs the request on a fallback model.
-		Fallbacks: anthropic.BetaFallbacksParamOfDefault(),
-		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},
-	})
+		// Haiku has no server-side fallback, so the parameter is only sent for other models.
+		params.Fallbacks = anthropic.BetaFallbacksParamOfDefault()
+		params.Betas = []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01}
+	}
+	client := anthropic.NewClient()
+	resp, err := client.Beta.Messages.New(ctx, params)
 	if err != nil {
 		var apiErr *anthropic.Error
 		if errors.As(err, &apiErr) {

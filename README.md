@@ -10,7 +10,7 @@ local network, and can optionally use the **Enphase cloud API** to fill in histo
 - EV charger sessions: energy, range added, how much came from solar, and the value at your electricity rates
 - Gateway token creation and renewal built in (Enlighten sign-in, or paste a token)
 - Appliance detection: finds larger appliances switching on and off in the second-by-second data, with suggestions for naming them
-- Optional AI suggestions (Claude) for naming detected appliances
+- AI help for naming detected appliances: a ready-made prompt for any AI chat, or optionally the Claude API
 - Home Assistant integration over MQTT, with automatic discovery
 - Light and dark mode (automatic, or chosen with the theme button), works on phones, and every chart has a table view
 
@@ -230,7 +230,8 @@ to the Go server.
 | `POLL_MS` | `1000` | Gateway polling interval; appliance detection needs 1-second readings |
 | `DASHBOARD_PASSWORD` | – | If set, the dashboard asks for this password (HTTP basic auth, any username) |
 | `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, `ENPHASE_CLIENT_SECRET` | – | Enables the [Enphase cloud](#enphase-cloud-optional) features |
-| `ANTHROPIC_API_KEY` | – | Enables [AI suggestions](#ai-suggestions-optional) for appliances |
+| `ANTHROPIC_API_KEY` | – | Enables the Claude API button for [AI suggestions](#ai-suggestions) |
+| `AI_MODEL` | `claude-haiku-5-5` | Claude model for AI suggestions |
 | `MQTT_URL`, `MQTT_USERNAME`, `MQTT_PASSWORD` | – | Enables [Home Assistant](#home-assistant) publishing |
 | `MQTT_TOPIC`, `HA_DISCOVERY_PREFIX` | `enphase_dashboard`, `homeassistant` | MQTT topics |
 
@@ -362,27 +363,34 @@ To identify one, switch a suspect on or off and watch for the bar on today's tim
 Steady loads like servers and network gear simply form the base load. The gateway is polled every
 second for this (`POLL_MS`); only detected runs are stored, about 100 bytes each.
 
-### AI suggestions (optional)
+### AI suggestions
 
-The built-in catalog only looks at power and circuit. The **Ask AI to identify** button sends the
-unnamed signatures to Claude, which can weigh more clues together: how regularly a load repeats,
-the hours it runs, and your own description of the house. That description goes in **About your
-home**, e.g. which appliances run on gas, what's off for the season, the size of a sauna heater. Each
-signature then shows up to three guesses with a confidence level and a one-line reason, and
-clicking a guess names the signature.
+The built-in catalog only looks at power and circuit. An AI assistant can weigh more clues together:
+how regularly a load repeats, the hours it runs, and your own description of the house. Write that
+description under **About your home**, e.g. which appliances run on gas, what's off for the season,
+the size of a sauna heater. There are two ways to ask:
 
-What is sent: for each unnamed signature, its step size, circuit, character, typical run times,
-repeat interval, starts per hour of day and energy, plus your household text and the names of
-appliances you've already identified. No raw readings, gateway details or location are sent. Requests
-happen only when you click the button, and use Claude Opus 5.5. A request uses about 2-3K input and
-2-4K output tokens, roughly 5-10 cents.
+- **Copy prompt for AI chat** (free, nothing to set up). Copies a ready-made prompt to the clipboard.
+  Paste it into a chat with Claude (the free claude.ai works) or another assistant. The answer refers
+  to each signature by the ID shown on its card, so you can name the right ones. If the browser blocks
+  the clipboard (it does on plain `http://` addresses other than localhost), the prompt appears in a
+  box to copy by hand.
+- **Ask Claude API** (optional). Appears once an API key is configured, and shows up to three guesses
+  per signature right on its card, each with a confidence level and a one-line reason. Click a guess
+  to use it as the name.
 
-Create the key in the Claude Developer Platform (<https://console.anthropic.com>), which is billed
-separately from a claude.ai subscription. A dedicated workspace with a small monthly spend limit
-keeps the cost capped.
+Either way, the prompt holds only a summary per signature (step size, circuit, character, typical
+run times, repeat interval, starts per hour of day, energy), your household text, and the names of
+appliances you've already identified. It contains no raw readings, gateway details or location.
 
-To enable it, set `ANTHROPIC_API_KEY` (from <https://console.anthropic.com>) in the dashboard's
-environment. Workload identity federation also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
+To enable the API button, create an API key in the Claude Developer Platform
+(<https://console.anthropic.com>), which is billed separately from a claude.ai subscription, and set
+`ANTHROPIC_API_KEY`. A dedicated workspace with a small monthly spend limit keeps the cost capped.
+Requests are sent only when you click, and use Claude Haiku 5.5 by default: about 2-3K input and
+2-4K output tokens, a fraction of a cent per request. Set `AI_MODEL=claude-opus-5-5` for the most
+capable model, at roughly 5-10 cents per request.
+
+Workload identity federation also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
 `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE`
 instead of a key. This needs an identity provider that issues tokens for the machine the dashboard
 runs on (Kubernetes, a cloud VM, CI), so on a home NAS or Pi an API key is the practical choice.
