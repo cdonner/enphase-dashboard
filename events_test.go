@@ -126,7 +126,7 @@ func TestSuggestions(t *testing.T) {
 	}{
 		{[]float64{2250, 2250}, []float64{0, 0}, 1800, "Electric water heater"},
 		{[]float64{0, 1150}, []float64{0, 300}, 120, "Microwave"},
-		{[]float64{0, 390}, []float64{0, 5}, 3, "Laser printer (fuser warming)"},
+		{[]float64{0, 390}, []float64{0, 5}, 3, "Coffee maker (warming plate)"},
 		{[]float64{1500, 1500}, []float64{1500, 1500}, 900, "Air conditioner / heat pump"},
 		{[]float64{350, 0}, []float64{350, 0}, 900, "Furnace blower"},
 	}
