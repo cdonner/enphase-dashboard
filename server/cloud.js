@@ -32,6 +32,7 @@ export function createCloud({ readJson, writeJson }) {
   async function oauthToken(params) {
     const res = await fetch(`${OAUTH}/token?${new URLSearchParams(params)}`, {
       method: 'POST',
+      signal: AbortSignal.timeout(30_000),
       headers: { Authorization: `Basic ${Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64')}` },
     });
     const body = await res.json().catch(() => ({}));
@@ -65,6 +66,7 @@ export function createCloud({ readJson, writeJson }) {
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       lastCall = Date.now();
       const res = await fetch(`${API}${path}`, {
+        signal: AbortSignal.timeout(30_000),
         headers: { Authorization: `Bearer ${await accessToken()}`, key: cfg.apiKey },
       });
       const body = await res.json().catch(() => ({}));

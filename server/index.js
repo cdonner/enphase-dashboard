@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createCloud } from './cloud.js';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const DATA = path.join(ROOT, 'data');
+const DATA = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
 const ENVOY = process.env.ENVOY_HOST || 'envoy.local';
 const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -150,6 +150,7 @@ async function requestToken(email, password, serial = state.gateway.serial) {
   if (!serial) throw new Error('Gateway serial number unknown - is the gateway reachable?');
   const login = await fetch(ENLIGHTEN_LOGIN, {
     method: 'POST',
+    signal: AbortSignal.timeout(30_000),
     body: new URLSearchParams({ 'user[email]': email, 'user[password]': password }),
   });
   const loginBody = await login.json().catch(() => ({}));
@@ -160,6 +161,7 @@ async function requestToken(email, password, serial = state.gateway.serial) {
   }
   const res = await fetch(ENTREZ_TOKENS, {
     method: 'POST',
+    signal: AbortSignal.timeout(30_000),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: loginBody.session_id, serial_num: serial, username: email }),
   });
@@ -536,6 +538,19 @@ if (existsSync(dist)) {
 
 // ---------- start ----------
 
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+process.on('unhandledRejection', (e) => log('Unhandled error:', e?.stack || e));
+
+log(`Starting: node ${process.version} ${process.arch}, data dir ${DATA}, gateway ${ENVOY}, TZ ${process.env.TZ || 'system'}`);
+
+// Listen first so the page is reachable even while the slower startup steps run.
+app
+  .listen(PORT, HOST, () => log(`Listening on http://${HOST}:${PORT}`))
+  .on('error', (e) => {
+    log(`Cannot listen on ${HOST}:${PORT}: ${e.message}`);
+    process.exit(1);
+  });
+
 state.token = (await readJson('token.json', null))?.token ?? null;
 if (!state.token && existsSync(path.join(ROOT, 'token.txt'))) {
   // One-time import of a hand-made token.
@@ -548,15 +563,23 @@ state.daily = await readJson('daily.json', {});
 await cloud.load();
 state.ev = await readJson('ev.json', state.ev);
 await rollDay(dayKey());
+log(`Data loaded: gateway token ${state.token ? 'present' : 'missing'}, cloud ${cloud.connected() ? 'connected' : 'not connected'}, ${Object.keys(state.daily).length} recorded days`);
+
 await loadGatewayInfo();
+log(state.gateway.reachable ? `Gateway ${state.gateway.serial} reachable, firmware ${state.gateway.firmware}` : state.lastError);
 await renewIfNeeded();
-sample();
-setInterval(sample, POLL_MS);
+
+let firstSample = true;
+const sampleAndReport = async () => {
+  await sample();
+  if (firstSample && (state.live || state.lastError)) {
+    firstSample = false;
+    log(state.live ? `First reading: ${Math.round(state.live.productionW)} W production` : `Reading failed: ${state.lastError}`);
+  }
+};
+sampleAndReport();
+setInterval(sampleAndReport, POLL_MS);
 setInterval(renewIfNeeded, 10 * 60_000);
 setInterval(loadGatewayInfo, 10 * 60_000);
 setTimeout(cloudTick, 15_000); // after the first samples have set today's baseline
 setInterval(cloudTick, 10 * 60_000);
-
-app.listen(PORT, HOST, () => {
-  console.log(`Enphase dashboard API on http://${HOST}:${PORT} (gateway ${ENVOY})`);
-});
