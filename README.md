@@ -374,7 +374,12 @@ clicking a guess names the signature.
 What is sent: for each unnamed signature, its step size, circuit, character, typical run times,
 repeat interval, starts per hour of day and energy, plus your household text and the names of
 appliances you've already identified. No raw readings, gateway details or location are sent. Requests
-happen only when you click the button, and use Claude Opus 5.5. A request typically costs a few cents.
+happen only when you click the button, and use Claude Opus 5.5. A request uses about 2-3K input and
+2-4K output tokens, roughly 5-10 cents.
+
+Create the key in the Claude Developer Platform (<https://console.anthropic.com>), which is billed
+separately from a claude.ai subscription. A dedicated workspace with a small monthly spend limit
+keeps the cost capped.
 
 To enable it, set `ANTHROPIC_API_KEY` (from <https://console.anthropic.com>) in the dashboard's
 environment. Workload identity federation also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
