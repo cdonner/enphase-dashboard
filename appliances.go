@@ -185,8 +185,11 @@ func (s *Server) recordRuns(runs []Run) {
 	}
 }
 
-// persistEvents writes today's runs if they changed. Caller holds s.mu.
+// persistEvents writes today's runs if they changed, and the detector state. Caller holds s.mu.
 func (s *Server) persistEvents() {
+	if err := s.writeJSON("detector.json", s.detector.State(nowMs()), 0o644); err != nil {
+		s.logf("Saving detector state: %v", err)
+	}
 	if !s.events.dirty {
 		return
 	}
@@ -271,6 +274,8 @@ type Span struct {
 	Sig   int       `json:"sig"`             // index into the appliance's signatures, -1 if unnamed
 	Label string    `json:"label,omitempty"` // that signature's label
 	Desc  Signature `json:"desc"`            // this run's own signature
+	// Already on when monitoring started: the real start is earlier than S.
+	StartedBefore bool `json:"startedBefore,omitempty"`
 }
 
 // activities groups a day's runs (plus runs still on) into activities: same appliance
@@ -312,7 +317,7 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 		a.Runs++
 		a.OnSeconds += float64(end-r.Start) / 1000
 		a.EnergyWh += r.power() * float64(end-r.Start) / 3_600_000
-		a.Spans = append(a.Spans, Span{Start: r.Start, End: end, Sig: sigN, Label: label, Desc: describe(r.DP, r.DQ)})
+		a.Spans = append(a.Spans, Span{Start: r.Start, End: end, Sig: sigN, Label: label, Desc: describe(r.DP, r.DQ), StartedBefore: r.StartedBefore})
 		a.lastEnd = max(a.lastEnd, end)
 		a.running = a.running || r.End == nil
 	}

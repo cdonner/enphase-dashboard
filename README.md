@@ -377,7 +377,12 @@ To identify one, switch a suspect on or off and watch for the bar on today's tim
 - two similar appliances on the same leg (a kettle and a toaster look the same),
 - appliances that switch within the same second as another.
 
-Steady loads like servers and network gear simply form the base load. The gateway is polled every
+Steady loads like servers and network gear simply form the base load.
+
+Appliances that are already on when the dashboard starts can't be seen switching on. Runs in
+progress are saved every minute, so a quick restart such as an update carries them over. After a
+longer break, a load well above the usual base load (the lowest level of the last 24 hours) is
+recorded as *already on when monitoring started*, and its switch-off completes the run. The gateway is polled every
 second for this (`POLL_MS`); only detected runs are stored, about 100 bytes each.
 
 ### AI suggestions

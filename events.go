@@ -31,7 +31,11 @@ type Run struct {
 	End   *int64    `json:"end,omitempty"`
 	DP    []float64 `json:"dp"` // W per leg
 	DQ    []float64 `json:"dq"` // var per leg
-	base  []float64 // leg levels just before it switched on (for the consistency check)
+	// Leg levels just before it switched on (for the consistency check). Only kept while
+	// the run is open; saved with the detector state, not with closed runs.
+	Base []float64 `json:"base,omitempty"`
+	// The load was already on when monitoring started, so Start is when it was first seen.
+	StartedBefore bool `json:"startedBefore,omitempty"`
 }
 
 func (r Run) power() float64 {
@@ -70,9 +74,106 @@ type Detector struct {
 	open    []Run
 	closed  []Run // closed since the last drain
 	edges   int   // edges seen today
+
+	// Lowest stable level per leg in each of the last 24 hours, to know the base load.
+	hourMin  [][24]float64
+	hourSeen [][24]int64 // unix hour each bucket belongs to
+	started  bool        // the first full set of stable levels has been checked
 }
 
 func NewDetector() *Detector { return &Detector{} }
+
+// DetectorState is saved every minute so a restart (e.g. an update) can carry on.
+type DetectorState struct {
+	SavedAt  int64         `json:"savedAt"`
+	Open     []Run         `json:"open"`
+	HourMin  [][24]float64 `json:"hourMin"`
+	HourSeen [][24]int64   `json:"hourSeen"`
+}
+
+const (
+	restoreOpenWithin = 10 * time.Minute // open runs survive a restart this short
+	alreadyOnMinW     = 1000.0           // excess over the base load reported at startup
+)
+
+func (d *Detector) State(now int64) DetectorState {
+	open := d.open
+	if open == nil {
+		open = []Run{}
+	}
+	return DetectorState{SavedAt: now, Open: open, HourMin: d.hourMin, HourSeen: d.hourSeen}
+}
+
+// Restore picks up a saved state: the base-load history always, the open runs only if
+// the state is recent.
+func (d *Detector) Restore(st DetectorState, now int64) {
+	d.hourMin, d.hourSeen = st.HourMin, st.HourSeen
+	if now-st.SavedAt <= restoreOpenWithin.Milliseconds() {
+		d.open = st.Open
+		d.started = len(st.Open) > 0 // they already account for what's on
+	}
+}
+
+// baseLoad is a leg's lowest stable level in the last 24 hours (ok=false if unknown).
+func (d *Detector) baseLoad(leg int, now int64) (float64, bool) {
+	if leg >= len(d.hourMin) {
+		return 0, false
+	}
+	hour := now / 3_600_000
+	best, ok := math.Inf(1), false
+	for i := 0; i < 24; i++ {
+		if d.hourSeen[leg][i] > 0 && hour-d.hourSeen[leg][i] < 24 {
+			best, ok = math.Min(best, d.hourMin[leg][i]), true
+		}
+	}
+	return best, ok
+}
+
+// trackBase records stable levels per hour, and once at startup reports a large load that
+// is already on (the excess over the base load) as a run, so its switch-off can close it.
+func (d *Detector) trackBase(at int64) {
+	n := len(d.legs)
+	if len(d.hourMin) != n {
+		d.hourMin, d.hourSeen = make([][24]float64, n), make([][24]int64, n)
+	}
+	hour := at / 3_600_000
+	allStable := true
+	for k, l := range d.legs {
+		if !l.haveStable {
+			allStable = false
+			continue
+		}
+		i := hour % 24
+		if d.hourSeen[k][i] != hour || l.stableP < d.hourMin[k][i] {
+			if d.hourSeen[k][i] != hour {
+				d.hourSeen[k][i] = hour
+				d.hourMin[k][i] = l.stableP
+			}
+			d.hourMin[k][i] = math.Min(d.hourMin[k][i], l.stableP)
+		}
+	}
+	if d.started || !allStable {
+		return
+	}
+	d.started = true
+	dp, dq, base := make([]float64, n), make([]float64, n), make([]float64, n)
+	var excess float64
+	for k, l := range d.legs {
+		b, ok := d.baseLoad(k, at-3_600_000) // history from before this start
+		if !ok {
+			return // no history yet (first start)
+		}
+		if l.stableP-b > edgeThreshold {
+			dp[k], base[k] = l.stableP-b, b
+			excess += dp[k]
+		} else {
+			base[k] = l.stableP
+		}
+	}
+	if excess >= alreadyOnMinW {
+		d.open = append(d.open, Run{Start: at, DP: dp, DQ: dq, Base: base, StartedBefore: true})
+	}
+}
 
 // Add feeds one reading: per-leg consumption P (W) and Q (var) at time `at` (ms).
 func (d *Detector) Add(at int64, p, q []float64) {
@@ -104,6 +205,7 @@ func (d *Detector) Add(at int64, p, q []float64) {
 	}
 	if d.pending == nil {
 		d.closeVanished(at)
+		d.trackBase(at)
 	}
 }
 
@@ -114,7 +216,7 @@ func (d *Detector) Add(at int64, p, q []float64) {
 func (d *Detector) closeVanished(at int64) {
 	for i := len(d.open) - 1; i >= 0; i-- {
 		r := d.open[i]
-		if len(r.base) != len(d.legs) {
+		if len(r.Base) != len(d.legs) {
 			continue
 		}
 		gone := true
@@ -122,14 +224,14 @@ func (d *Detector) closeVanished(at int64) {
 			if r.DP[k] <= edgeThreshold/2 {
 				continue
 			}
-			if !l.haveStable || l.stableP > r.base[k]+0.4*r.DP[k] {
+			if !l.haveStable || l.stableP > r.Base[k]+0.4*r.DP[k] {
 				gone = false
 				break
 			}
 		}
 		if gone {
 			end := at
-			r.End = &end
+			r.End, r.Base = &end, nil
 			d.closed = append(d.closed, r)
 			d.open = append(d.open[:i], d.open[i+1:]...)
 		}
@@ -194,7 +296,7 @@ func (d *Detector) flush() {
 				base[k] = l.stableP
 			}
 		}
-		d.open = append(d.open, Run{Start: e.at, DP: e.dp, DQ: e.dq, base: base})
+		d.open = append(d.open, Run{Start: e.at, DP: e.dp, DQ: e.dq, Base: base})
 		if len(d.open) > maxOpenRuns {
 			d.open = d.open[1:] // never matched an off; forget the oldest
 		}
@@ -240,13 +342,13 @@ func (d *Detector) matchOff(e *pendingEdge) {
 	r := d.open[best]
 	end := e.at
 	if !partial {
-		r.End = &end
+		r.End, r.Base = &end, nil
 		d.closed = append(d.closed, r)
 		d.open = append(d.open[:best], d.open[best+1:]...)
 		return
 	}
 	// Split: the part that switched off becomes a closed run; the rest stays on.
-	part := Run{Start: r.Start, End: &end, DP: off, DQ: make([]float64, len(off))}
+	part := Run{Start: r.Start, End: &end, DP: off, DQ: make([]float64, len(off)), StartedBefore: r.StartedBefore}
 	share := offSum / r.power()
 	for k := range r.DQ {
 		part.DQ[k] = r.DQ[k] * share

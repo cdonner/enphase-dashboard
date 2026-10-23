@@ -298,3 +298,61 @@ func TestLongRunStaysOpenWithOtherLoads(t *testing.T) {
 		t.Fatalf("closed %+v, open %+v", runs, d.open)
 	}
 }
+
+func TestOpenRunSurvivesQuickRestart(t *testing.T) {
+	d := NewDetector()
+	// EV on at t=10 (4.6 kW per leg).
+	feed(d, 0, 100, func(t int) []float64 {
+		if t >= 10 {
+			return []float64{5100, 5000}
+		}
+		return []float64{500, 400}
+	}, 0)
+	if len(d.open) != 1 {
+		t.Fatalf("open %d", len(d.open))
+	}
+	st := d.State(100_000)
+
+	// Restart two minutes later; the EV switches off after another 100 s.
+	d2 := NewDetector()
+	d2.Restore(st, 220_000)
+	feed(d2, 220, 300, func(t int) []float64 {
+		if t < 100 {
+			return []float64{5100, 5000}
+		}
+		return []float64{500, 400}
+	}, 0)
+	runs := d2.drainClosed()
+	if len(runs) != 1 || runs[0].Start != st.Open[0].Start || runs[0].StartedBefore {
+		t.Fatalf("runs %+v", runs)
+	}
+	if runs[0].Base != nil {
+		t.Error("closed runs shouldn't keep Base")
+	}
+}
+
+func TestLoadAlreadyOnAtStartup(t *testing.T) {
+	// Yesterday's history: base load about 500 / 400 W.
+	const t0 = 1_792_000_000 // a realistic unix time (hour 0 means "no data")
+	old := NewDetector()
+	feed(old, t0, 60, func(int) []float64 { return []float64{500, 400} }, 0)
+	st := old.State((t0 + 60) * 1000)
+
+	// Monitoring restarts much later while the EV is already charging.
+	start := int64(t0 + 6*3600)
+	d := NewDetector()
+	d.Restore(st, start*1000)
+	feed(d, start, 600, func(t int) []float64 {
+		if t < 300 {
+			return []float64{5100, 5000}
+		}
+		return []float64{500, 400}
+	}, 0)
+	runs := d.drainClosed()
+	if len(runs) != 1 || !runs[0].StartedBefore {
+		t.Fatalf("runs %+v, open %+v", runs, d.open)
+	}
+	if sig := describe(runs[0].DP, runs[0].DQ); sig.Legs != "240 V" || !near(sig.PowerW, 9200, 200) {
+		t.Errorf("signature %+v", sig)
+	}
+}

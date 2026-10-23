@@ -200,6 +200,7 @@ function Timeline({ date, activities, onName, onChanged }) {
             <span className="muted">
               {fmtDur((hover.s[1] - hover.s[0]) / 1000)} · {label(hover.a)}
               {hover.sp.label ? ` · ${hover.sp.label}` : ''} · {sigText(hover.sp.desc)}
+              {hover.sp.startedBefore ? ' · already on when monitoring started' : ''}
             </span>
           </>
         ) : (

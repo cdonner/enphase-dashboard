@@ -162,6 +162,10 @@ func (s *Server) start() {
 		s.cloudDaily = cloudDaily.Days
 	}
 	s.readJSON("ev.json", &s.ev)
+	var det DetectorState
+	if s.readJSON("detector.json", &det) {
+		s.detector.Restore(det, nowMs())
+	}
 	s.readJSON("settings.json", &s.settings)
 	s.readJSON(appliancesFile, &s.appliances)
 	s.migrateAppliances()
