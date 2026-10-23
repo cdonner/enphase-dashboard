@@ -24,7 +24,7 @@ const (
 	defaultAIModel   = "claude-haiku-5-5"
 	aiFile           = "ai-suggestions.json"
 	aiMaxClusters    = 15
-	aiRequestTimeout = 3 * time.Minute
+	aiRequestTimeout = 5 * time.Minute
 )
 
 type AIGuess struct {

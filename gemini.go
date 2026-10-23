@@ -25,7 +25,7 @@ import (
 var (
 	geminiBaseURL = "https://generativelanguage.googleapis.com/v1beta" // replaced in tests
 	// Free-tier models are sometimes overloaded or slow; don't wait long on one of them.
-	geminiAttemptTimeout = 45 * time.Second
+	geminiAttemptTimeout = 90 * time.Second
 )
 
 var geminiPicked struct {
@@ -46,7 +46,8 @@ func (e *geminiError) Error() string { return e.msg }
 func geminiRetryable(err error) bool {
 	var ge *geminiError
 	if errors.As(err, &ge) {
-		return ge.status == 429 || ge.status >= 500
+		// 404: listed but not available to this key (e.g. "no longer available to new users").
+		return ge.status == 404 || ge.status == 429 || ge.status >= 500
 	}
 	return errors.Is(err, context.DeadlineExceeded)
 }
@@ -205,25 +206,52 @@ func askGemini(ctx context.Context, prompt string) (string, error) {
 			geminiPicked.Unlock()
 			return text, nil
 		}
-		if ctx.Err() != nil || !geminiRetryable(err) {
-			return "", err
+		retry := ctx.Err() == nil && geminiRetryable(err)
+		var ge *geminiError
+		if errors.As(err, &ge) && ge.status == 404 {
+			geminiDropModel(model) // don't try it again
 		}
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
 			err = fmt.Errorf("no answer within %s", geminiAttemptTimeout)
 		}
 		errs = append(errs, fmt.Sprintf("%s: %v", model, err))
+		if !retry {
+			break
+		}
 	}
-	return "", fmt.Errorf("all Gemini models were busy, try again later (%s)", strings.Join(errs, "; "))
+	return "", fmt.Errorf("no Gemini model answered, try again later (%s)", strings.Join(errs, "; "))
 }
 
+func geminiDropModel(model string) {
+	geminiPicked.Lock()
+	defer geminiPicked.Unlock()
+	var keep []string
+	for _, m := range geminiPicked.candidates {
+		if m != model {
+			keep = append(keep, m)
+		}
+	}
+	geminiPicked.candidates = keep
+}
+
+var geminiVersion = regexp.MustCompile(`^gemini-(\d+)`)
+
 func askGeminiModel(ctx context.Context, model, prompt string) (string, error) {
+	genConfig := map[string]any{
+		"responseMimeType": "application/json",
+		"responseSchema":   geminiSchema,
+	}
+	if m := geminiVersion.FindStringSubmatch(model); m != nil {
+		if major, _ := strconv.Atoi(m[1]); major >= 3 {
+			// Gemini 3 models think at a high level by default, which can take minutes on
+			// the free tier; low is plenty for matching a few numbers.
+			genConfig["thinkingConfig"] = map[string]any{"thinkingLevel": "low"}
+		}
+	}
 	body := map[string]any{
 		"systemInstruction": map[string]any{"parts": []map[string]string{{"text": aiSystem}}},
 		"contents":          []map[string]any{{"role": "user", "parts": []map[string]string{{"text": prompt}}}},
-		"generationConfig": map[string]any{
-			"responseMimeType": "application/json",
-			"responseSchema":   geminiSchema,
-		},
+		"generationConfig":  genConfig,
 	}
 	var resp struct {
 		Candidates []struct {

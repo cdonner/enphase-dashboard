@@ -430,8 +430,9 @@ capable model, at roughly 5-10 cents per request.
 On the free tier Google may use requests to improve its products. The request contains only the
 summary described above and your household text. The dashboard tries the *Flash* models available
 to the key, newest first, then the *Flash-Lite* ones. Free-tier models are sometimes overloaded
-("high demand"), so when one is busy, rate limited, or doesn't answer within 45 seconds, it moves on
-to the next. The suggestions show which model answered; set `GEMINI_MODEL` to always use one model.
+("high demand"), or listed but no longer offered to new keys, so when one is busy, rate limited,
+unavailable, or doesn't answer within 90 seconds, it moves on to the next. Gemini 3 models are asked
+to think at a low level, which keeps them fast. The suggestions show which model answered; set `GEMINI_MODEL` to always use one model.
 
 Workload identity federation for Claude also works: set `ANTHROPIC_FEDERATION_RULE_ID`,
 `ANTHROPIC_ORGANIZATION_ID`, `ANTHROPIC_SERVICE_ACCOUNT_ID` and `ANTHROPIC_IDENTITY_TOKEN_FILE`

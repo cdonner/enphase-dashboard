@@ -58,6 +58,9 @@ func TestAskGemini(t *testing.T) {
 		t.Errorf("picked model path %q, want the newest plain Flash", gotModelPath)
 	}
 	gc, _ := gotBody["generationConfig"].(map[string]any)
+	if tc, _ := gc["thinkingConfig"].(map[string]any); tc["thinkingLevel"] != "low" {
+		t.Errorf("thinkingConfig %v, want low for a Gemini 3 model", gc["thinkingConfig"])
+	}
 	if gc["responseMimeType"] != "application/json" || gc["responseSchema"] == nil {
 		t.Errorf("generationConfig %v", gc)
 	}
@@ -81,6 +84,7 @@ func TestGeminiFallsBackWhenBusy(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{
 				{"name": "models/gemini-3.8-flash", "supportedGenerationMethods": []string{"generateContent"}},
 				{"name": "models/gemini-3.5-flash", "supportedGenerationMethods": []string{"generateContent"}},
+				{"name": "models/gemini-3.2-flash", "supportedGenerationMethods": []string{"generateContent"}},
 				{"name": "models/gemini-3.0-flash", "supportedGenerationMethods": []string{"generateContent"}},
 				{"name": "models/gemini-3.8-flash-lite", "supportedGenerationMethods": []string{"generateContent"}},
 			}})
@@ -93,6 +97,9 @@ func TestGeminiFallsBackWhenBusy(t *testing.T) {
 				w.Write([]byte(`{"error":{"code":503,"message":"high demand","status":"UNAVAILABLE"}}`))
 			case "gemini-3.5-flash": // hangs
 				time.Sleep(300 * time.Millisecond)
+			case "gemini-3.2-flash": // listed but not available
+				w.WriteHeader(404)
+				w.Write([]byte(`{"error":{"code":404,"message":"no longer available to new users"}}`))
 			default:
 				json.NewEncoder(w).Encode(map[string]any{"candidates": []map[string]any{
 					{"content": map[string]any{"parts": []map[string]string{{"text": `{"signatures":[]}`}}}},
@@ -111,7 +118,7 @@ func TestGeminiFallsBackWhenBusy(t *testing.T) {
 	if _, err := askGemini(t.Context(), "x"); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(tried, ",") != "gemini-3.8-flash,gemini-3.5-flash,gemini-3.0-flash" {
+	if strings.Join(tried, ",") != "gemini-3.8-flash,gemini-3.5-flash,gemini-3.2-flash,gemini-3.0-flash" {
 		t.Errorf("tried %v", tried)
 	}
 	if geminiPicked.model != "gemini-3.0-flash" {
@@ -120,5 +127,10 @@ func TestGeminiFallsBackWhenBusy(t *testing.T) {
 	// Flash-Lite comes last.
 	if c := geminiPicked.candidates; c[len(c)-1] != "gemini-3.8-flash-lite" {
 		t.Errorf("candidates %v", c)
+	}
+	for _, c := range geminiPicked.candidates {
+		if c == "gemini-3.2-flash" {
+			t.Error("unavailable model should be dropped from the candidates")
+		}
 	}
 }
