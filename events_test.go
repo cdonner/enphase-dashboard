@@ -189,3 +189,13 @@ func TestChatPrompt(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyListsAreNotNull(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	if a := s.activities(nil, nil, nowMs()); a == nil {
+		t.Error("activities must be an empty list, not nil (the UI expects an array)")
+	}
+	if c := s.clusters(); c == nil {
+		t.Error("clusters must be an empty list, not nil")
+	}
+}

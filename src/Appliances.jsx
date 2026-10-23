@@ -379,7 +379,7 @@ export default function Appliances() {
     lists.reload();
   };
 
-  const acts = day.data?.date === date ? day.data.activities : [];
+  const acts = (day.data?.date === date && day.data.activities) || [];
   const running = acts.filter((a) => a.end == null);
   const named = acts.filter((a) => a.appliance);
   const sum = (xs) => xs.reduce((s, a) => s + a.energyWh, 0);

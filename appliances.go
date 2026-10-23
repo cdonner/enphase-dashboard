@@ -194,7 +194,7 @@ type Activity struct {
 func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 	all := append(append([]Run{}, runs...), open...)
 	sort.Slice(all, func(i, j int) bool { return all[i].Start < all[j].Start })
-	var out []Activity
+	out := []Activity{}
 	for _, r := range all {
 		end := now
 		if r.End != nil {
@@ -320,7 +320,7 @@ func (s *Server) clusters() []Cluster {
 			g.hours[time.UnixMilli(r.Start).Hour()]++
 		}
 	}
-	var out []Cluster
+	out := []Cluster{}
 	for _, g := range groups {
 		if g.n < minClusterRuns {
 			continue
