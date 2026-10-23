@@ -382,6 +382,27 @@ things help:
 - **Ignore.** Hides a signature from the timeline and the naming list. Ignored signatures are listed
   under *Known appliances*, where you can show them again.
 
+**Background.** This technique is called *non-intrusive (appliance) load monitoring*, NILM: working
+out individual appliances from a single whole-house measurement instead of a meter on each circuit.
+The dashboard follows the classic event-based approach. It detects steps between steady power
+levels, describes each step by real and reactive power (here per leg, which separates 120 V and
+240 V loads), pairs switch-ons with switch-offs, and clusters similar steps so the user can name
+them. Newer research mostly trains machine-learning models on data sampled much faster than the
+gateway's one reading per second; that isn't possible here, so naming stays with the user.
+
+- G. W. Hart, "Nonintrusive appliance load monitoring," *Proceedings of the IEEE*, vol. 80, no. 12,
+  pp. 1870–1891, 1992. The original work: steps in real and reactive power as appliance signatures.
+- M. Zeifman and K. Roth, "Nonintrusive appliance load monitoring: Review and outlook," *IEEE
+  Transactions on Consumer Electronics*, vol. 57, no. 1, pp. 76–84, 2011. A survey of approaches and
+  of what is feasible at different sampling rates.
+- J. Z. Kolter and M. J. Johnson, "REDD: A public data set for energy disaggregation research,"
+  SustKDD workshop, 2011. One of the first public data sets for comparing methods.
+- N. Batra et al., "NILMTK: An open source toolkit for non-intrusive load monitoring," ACM e-Energy,
+  2014. A Python toolkit with data sets and reference algorithms:
+  <https://github.com/nilmtk/nilmtk>
+- J. Kelly and W. Knottenbelt, "Neural NILM: Deep neural networks applied to energy
+  disaggregation," ACM BuildSys, 2015. The machine-learning direction.
+
 **Limitations.** This works best for appliances that switch on and off at a fixed power, roughly
 60 W and up. It can't separate:
 
