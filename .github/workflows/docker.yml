@@ -1,4 +1,4 @@
-name: Docker image
+name: Build
 
 on:
   push:
@@ -7,19 +7,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
-  build:
+  image:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - base: node:22-alpine
-            suffix: ''
-          - base: node:22-slim
-            suffix: '-debian'
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -33,9 +26,6 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          flavor: |
-            latest=false
-            suffix=${{ matrix.suffix }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
@@ -43,10 +33,37 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          build-args: BASE=${{ matrix.base }}
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.base }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.base }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Standalone binaries attached to GitHub releases (tags v*).
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: npm ci && npx vite build
+      - name: Build binaries
+        run: |
+          mkdir -p out
+          build() { CGO_ENABLED=0 GOOS=$1 GOARCH=$2 GOARM=$3 go build -trimpath -ldflags="-s -w" -o "out/enphase-dashboard-$4" .; }
+          build linux amd64 "" linux-amd64
+          build linux arm64 "" linux-arm64
+          build linux arm 7 linux-armv7
+          build darwin arm64 "" macos-arm64
+          build windows amd64 "" windows-amd64.exe
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

@@ -1,25 +1,28 @@
-ARG BASE=node:22-alpine
-# The UI build output is platform-independent, so build it natively on the CI runner.
-FROM --platform=$BUILDPLATFORM node:22-alpine AS build
+# 1. UI: platform-independent output, so build it natively on the CI runner.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS ui
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY index.html vite.config.js ./
 COPY src ./src
-RUN npm run build
+RUN npx vite build
 
-# Runtime base: node:22-alpine (default) or node:22-slim (Debian), via --build-arg BASE=...
-FROM ${BASE}
-WORKDIR /app
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=3001
-RUN if command -v apk >/dev/null; then apk add --no-cache tzdata; \
-    else apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*; fi
-COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY server ./server
-COPY --from=build /app/dist ./dist
-RUN mkdir -p data && chown node:node data
-USER node
+# 2. Server: cross-compile a static Go binary with the UI embedded.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS server
+ARG TARGETOS TARGETARCH TARGETVARIANT
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY *.go ./
+COPY --from=ui /app/dist ./dist
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH GOARM=${TARGETVARIANT#v} \
+    go build -trimpath -ldflags="-s -w" -o /out/enphase-dashboard .
+
+# 3. Nothing but the binary: no libc or shell, so it also runs on kernels that
+# can't load ordinary userlands (e.g. 32-bit ARM NAS models with 32K pages).
+FROM scratch
+COPY --from=server /out/enphase-dashboard /enphase-dashboard
+ENV HOST=0.0.0.0 PORT=3001 DATA_DIR=/app/data
 VOLUME /app/data
 EXPOSE 3001
-CMD ["node", "server/index.js"]
+ENTRYPOINT ["/enphase-dashboard"]

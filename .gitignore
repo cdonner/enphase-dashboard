@@ -3,3 +3,4 @@ dist/
 data/
 .env
 token.txt
+/enphase-dashboard

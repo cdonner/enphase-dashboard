@@ -16,12 +16,12 @@ Not affiliated with or endorsed by Enphase Energy.
 ## How it works
 
 ```
-browser ──► dashboard server (Node) ──► IQ Gateway (https, local network)
-                                    └──► Enphase cloud API (optional)
+browser ──► dashboard server ──► IQ Gateway (https, local network)
+                              └──► Enphase cloud API (optional)
 ```
 
 Browsers can't call the gateway directly, because it uses a self-signed certificate and has no CORS.
-So a small server does that work. It polls `/ivp/meters/readings` every 5 s, records one point per
+So a small server does that work. It's a single self-contained Go binary with the React UI built in, and it polls `/ivp/meters/readings` every 5 s, records one point per
 minute, and works out daily totals from the meters' lifetime counters. On some firmware versions the
 `whToday` fields in `production.json` are broken, which is why it doesn't use them. Everything it
 stores goes in `data/`.
@@ -66,7 +66,6 @@ services:
     image: ghcr.io/cdonner/enphase-dashboard:latest
     container_name: solar-dashboard
     restart: unless-stopped
-    user: "0:0"                  # lets the container write to the NAS share
     ports:
       - "3001:3001"
     environment:
@@ -83,10 +82,6 @@ services:
 
 Put the values directly in the YAML, because the NAS apps don't read a `.env` file. Then open
 `http://<nas-ip>:3001`.
-
-`user: "0:0"` runs the container as root. That avoids permission errors on NAS shares, which are
-usually not writable by the image's default user (uid 1000). If you'd rather not run it as root,
-remove that line and give uid 1000 write access to the data folder instead.
 
 ### 3. Moving from another machine (optional)
 
@@ -108,22 +103,41 @@ the container: in Container Station, open the application and choose *Recreate* 
 
 - **Gateway address:** use the IP address. `envoy.local` usually doesn't resolve inside containers.
   Giving the gateway a fixed address (a DHCP reservation in your router) stops it from moving.
-- **ARM models:** older 32-bit ARM NAS units, such as the QNAP TS-431X series, use the `arm/v7`
-  image. Some older ARM models no longer get Container Station updates; if yours doesn't offer it in
-  App Center, run the image on a Raspberry Pi or another always-on machine instead.
+- **ARM models and "page size" warnings:** some 32-bit ARM NAS units, such as the QNAP TS-431X
+  series, run kernels with 32 KB memory pages. Ordinary Linux images (Debian, Alpine, Node) can't
+  start on them, and QNAP shows a page-size warning when you install any container. This image is
+  just one static Go binary with no system libraries, so it isn't affected and the warning can be
+  ignored.
+- **No Container Station?** Run the binary directly instead (see below).
 - **Port in use:** change the left side of the mapping, for example `"8085:3001"`.
 
-## Quick start (Node)
+## Running without Docker
 
-Requires Node 22+.
+Each [release](https://github.com/cdonner/enphase-dashboard/releases) includes standalone binaries
+for Linux (`amd64`, `arm64`, `armv7`), macOS, and Windows. A binary has the UI built in, so there's
+nothing else to install:
+
+```bash
+chmod +x enphase-dashboard-linux-armv7
+ENVOY_HOST=192.168.1.50 TZ=America/New_York HOST=0.0.0.0 ./enphase-dashboard-linux-armv7
+```
+
+It stores its data in `./data` (change this with `DATA_DIR`) and also reads settings from a `.env`
+file in the current directory. To start it at boot, use a systemd unit on Linux, or the NAS's
+autorun mechanism (QNAP: `autorun.sh`).
+
+## Building from source
+
+Requires Node 22+ and Go 1.26+.
 
 ```bash
 npm install
 cp .env.example .env   # set ENVOY_HOST and TZ
-npm start              # builds the UI and serves it on http://127.0.0.1:3001
+npm start              # builds the UI and the server binary, then serves on http://127.0.0.1:3001
 ```
 
-For development, `npm run dev` runs Vite on http://localhost:5173 with hot reload and proxies `/api` to the server.
+For development, `npm run dev` runs Vite on http://localhost:5173 with hot reload, and proxies `/api`
+to the Go server.
 
 ## Configuration
 
@@ -133,6 +147,7 @@ For development, `npm run dev` runs Vite on http://localhost:5173 with hot reloa
 | `TZ` | system | Time zone; daily totals reset at local midnight |
 | `PORT` | `3001` | |
 | `HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Interface to listen on |
+| `DATA_DIR` | `./data` (`/app/data` in Docker) | Where tokens and history are stored |
 | `POLL_MS` | `5000` | Gateway polling interval |
 | `DASHBOARD_PASSWORD` | – | If set, the dashboard asks for this password (HTTP basic auth, any username) |
 | `ENPHASE_API_KEY`, `ENPHASE_CLIENT_ID`, `ENPHASE_CLIENT_SECRET` | – | Enables the [Enphase cloud](#enphase-cloud-optional) features |
@@ -173,7 +188,7 @@ Access tokens refresh themselves, provided the server runs at least once a month
 
 ## Data and security
 
-Everything is stored in `data/`:
+Everything is stored in the data directory (`DATA_DIR`):
 
 | File | Contents |
 |---|---|

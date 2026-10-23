@@ -5,16 +5,12 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=22"
-  },
   "scripts": {
-    "dev": "concurrently -k -n api,web -c blue,green \"node --env-file-if-exists=.env --watch server/index.js\" \"vite\"",
-    "build": "vite build",
-    "start": "vite build && node --env-file-if-exists=.env server/index.js"
+    "dev": "vite build && concurrently -k -n api,web -c blue,green \"go run .\" \"vite\"",
+    "build": "vite build && go build -o enphase-dashboard .",
+    "start": "npm run build && ./enphase-dashboard"
   },
   "dependencies": {
-    "express": "^5.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
