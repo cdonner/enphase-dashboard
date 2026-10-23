@@ -106,14 +106,27 @@ func TestDetectorTwoStepAndNoise(t *testing.T) {
 }
 
 func TestSignatureMatchAndClusterKey(t *testing.T) {
-	if !sameSignature([]float64{0, 1200}, []float64{0, 1260}) {
-		t.Error("1200 vs 1260 W on leg 2 should match")
+	sig := func(p1, p2, ratio float64) Sig {
+		return Sig{DP: []float64{p1, p2}, DQ: []float64{p1 * ratio, p2 * ratio}}
 	}
-	if sameSignature([]float64{0, 1200}, []float64{1200, 0}) {
-		t.Error("different legs must not match")
+	cases := []struct {
+		a, b Sig
+		want bool
+		why  string
+	}{
+		{sig(0, 1200, 0), sig(0, 1260, 0), true, "1200 vs 1260 W on leg 2"},
+		{sig(0, 1200, 0), sig(1200, 0, 0), false, "different legs"},
+		{sig(2000, 2000, 0), sig(2000, 0, 0), false, "240 V vs 120 V"},
+		{sig(74, 0, 0), sig(82, 0, 0), true, "74 vs 82 W"},
+		{sig(74, 0, 0), sig(112, 0, 0), false, "74 vs 112 W (was matched by the old 60 W tolerance)"},
+		{sig(74, 0, 0), sig(14, 0, 0), false, "74 vs 14 W"},
+		{sig(344, 0, 0.4), sig(348, 0, 1.0), false, "printer warm-up (mixed) vs furnace motor of equal power"},
+		{sig(400, 0, 0.02), sig(410, 0, 0.1), true, "two resistive readings"},
 	}
-	if sameSignature([]float64{2000, 2000}, []float64{2000, 0}) {
-		t.Error("240 V vs 120 V must not match")
+	for _, c := range cases {
+		if got := sameSignature(c.a, c.b); got != c.want {
+			t.Errorf("%s: got %v", c.why, got)
+		}
 	}
 	if clusterKey([]float64{0, 1200}) != clusterKey([]float64{0, 1210}) {
 		t.Error("cluster key should be stable for small differences")

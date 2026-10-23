@@ -19,7 +19,8 @@ const (
 	activityGap      = 20 * time.Minute // repeats of one signature closer than this are one activity
 	clusterDays      = 7                // unnamed runs from this many days are clustered
 	matchTolPct      = 0.15             // signatures match within 15% per leg...
-	matchTolW        = 60.0             // ...or 60 W, whichever is larger
+	matchTolW        = 25.0             // ...or 25 W, whichever is larger,
+	matchTolRatio    = 0.25             // and reactive/real power ratios within 0.25 (character)
 	minClusterRuns   = 1                // show signatures for naming from their first run
 	maxClusters      = 40               // most energy first
 	appliancesFile   = "appliances.json"
@@ -63,7 +64,7 @@ func (s *Server) addSignature(name string, sig Sig) Appliance {
 		a := &s.appliances[i]
 		if strings.EqualFold(a.Name, name) {
 			for _, have := range a.Signatures {
-				if sameSignature(have.DP, sig.DP) {
+				if sameSignature(have, sig) {
 					return *a
 				}
 			}
@@ -128,20 +129,32 @@ func describe(dp, dq []float64) Signature {
 	return s
 }
 
-// sameSignature: same legs used, each within tolerance.
-func sameSignature(a, b []float64) bool {
-	if len(a) != len(b) {
+// sameSignature: same legs used, power within tolerance on each, and the same character
+// (a motor and a heating element of equal wattage are different appliances).
+func sameSignature(a, b Sig) bool {
+	if len(a.DP) != len(b.DP) {
 		return false
 	}
-	for i := range a {
-		if (a[i] > edgeThreshold/2) != (b[i] > edgeThreshold/2) {
+	var pa, pb, qa, qb float64
+	for i := range a.DP {
+		if (a.DP[i] > edgeThreshold/2) != (b.DP[i] > edgeThreshold/2) {
 			return false
 		}
-		if math.Abs(a[i]-b[i]) > math.Max(matchTolW, matchTolPct*math.Max(math.Abs(a[i]), math.Abs(b[i]))) {
+		if math.Abs(a.DP[i]-b.DP[i]) > math.Max(matchTolW, matchTolPct*math.Max(math.Abs(a.DP[i]), math.Abs(b.DP[i]))) {
 			return false
+		}
+		pa, pb = pa+a.DP[i], pb+b.DP[i]
+		if i < len(a.DQ) {
+			qa += a.DQ[i]
+		}
+		if i < len(b.DQ) {
+			qb += b.DQ[i]
 		}
 	}
-	return true
+	if pa <= 0 || pb <= 0 {
+		return true
+	}
+	return math.Abs(math.Abs(qa/pa)-math.Abs(qb/pb)) <= matchTolRatio
 }
 
 // ---------- storage ----------
@@ -212,16 +225,16 @@ func newID() string {
 
 // applianceFor returns the named appliance matching a run, if any. Caller holds s.mu.
 func (s *Server) applianceFor(r Run) *Appliance {
-	a, _ := s.matchSignature(r.DP)
+	a, _ := s.matchSignature(r.DP, r.DQ)
 	return a
 }
 
-// matchSignature returns the named appliance and the index of its signature matching dp.
+// matchSignature returns the named appliance and the index of its signature matching dp/dq.
 // Caller holds s.mu.
-func (s *Server) matchSignature(dp []float64) (*Appliance, int) {
+func (s *Server) matchSignature(dp, dq []float64) (*Appliance, int) {
 	for i := range s.appliances {
 		for n, sig := range s.appliances[i].Signatures {
-			if sameSignature(sig.DP, dp) {
+			if sameSignature(sig, Sig{DP: dp, DQ: dq}) {
 				return &s.appliances[i], n
 			}
 		}
@@ -289,7 +302,7 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 		if r.End != nil {
 			end = *r.End
 		}
-		app, sigN := s.matchSignature(r.DP)
+		app, sigN := s.matchSignature(r.DP, r.DQ)
 		var name, id *string
 		label := ""
 		if app != nil {
@@ -304,7 +317,7 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 				cEnd = now
 			}
 			same := (name != nil && c.Appliance != nil && *c.Appliance == *name) ||
-				(name == nil && c.Appliance == nil && sameSignature(c.Signature.DP, r.DP))
+				(name == nil && c.Appliance == nil && sameSignature(Sig{DP: c.Signature.DP, DQ: c.Signature.DQ}, Sig{DP: r.DP, DQ: r.DQ}))
 			if same && r.Start-cEnd <= activityGap.Milliseconds() {
 				a = c
 				break
@@ -385,7 +398,7 @@ func (s *Server) clusters() []Cluster {
 			}
 			var g *acc
 			for _, c := range groups {
-				if sameSignature(c.dp, r.DP) {
+				if sameSignature(Sig{DP: c.dp, DQ: c.dq}, Sig{DP: r.DP, DQ: r.DQ}) {
 					g = c
 					break
 				}
