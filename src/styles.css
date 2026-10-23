@@ -247,3 +247,4 @@ button.tl-label:hover span:last-child { text-decoration: underline; }
 button.sig-label { font-size: 13px; color: var(--text-primary); padding: 0 4px; }
 .sig-label-input { font: inherit; font-size: 13px; padding: 2px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); width: 120px; }
 .saved { color: #0ca30c; }
+.ai-note { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--hover); }

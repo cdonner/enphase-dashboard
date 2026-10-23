@@ -386,13 +386,28 @@ function AskAI({ providers = [], household, onChanged }) {
       }
     });
   const [asking, setAsking] = useState(null);
+  const [elapsed, setElapsed] = useState(0);
   const askApi = (p) =>
     run(async () => {
       setAsking(p.id);
+      setElapsed(0);
+      const started = Date.now();
+      const timer = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
       try {
-        await api(`/appliances/ask-ai?provider=${p.id}`, { method: 'POST' });
+        const res = await api(`/appliances/ask-ai?provider=${p.id}`, { method: 'POST' });
+        // The response maps signature IDs to suggestions; count the ones from this request.
+        const fresh = Object.values(res).filter((x) => x.at >= started - 1000);
+        const model = fresh[0]?.model;
+        setNote(
+          fresh.length
+            ? `${p.name}${model ? ` (${model})` : ''} added suggestions to ${fresh.length} ${
+                fresh.length === 1 ? 'signature' : 'signatures'
+              }. They're shown on each card below.`
+            : `${p.name} answered, but had no suggestions.`,
+        );
         onChanged();
       } finally {
+        clearInterval(timer);
         setAsking(null);
       }
     });
@@ -433,7 +448,9 @@ function AskAI({ providers = [], household, onChanged }) {
         </a>
         {providers.map((p) => (
           <button key={p.id} className="ghost" disabled={busy} onClick={() => askApi(p)} title={`Model: ${p.model}`}>
-            {asking === p.id ? `Asking ${p.name}…` : `Ask ${p.name}`}
+            {asking === p.id
+              ? `Asking ${p.name}… ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+              : `Ask ${p.name}`}
           </button>
         ))}
       </div>
@@ -441,7 +458,13 @@ function AskAI({ providers = [], household, onChanged }) {
         The prompt holds only summary numbers per signature and the text above, no readings or location.
         {providers.length ? ' The Ask buttons show the answers right here.' : ''}
       </p>
-      {note && <p className="small">{note}</p>}
+      {asking && (
+        <p className="muted small">
+          Free models are often busy and can take 1–2 minutes; the dashboard tries the next model when one doesn't
+          answer.
+        </p>
+      )}
+      {note && <p className="small ai-note">{note}</p>}
       {manual && (
         <div className="manual-copy">
           <p className="small">Your browser blocked the clipboard on this address. Select all and copy:</p>
