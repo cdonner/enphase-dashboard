@@ -275,3 +275,7 @@ ul.co-start { list-style: none; margin: 0; padding: 4px 8px; display: grid; gap:
   .data-table.known td { padding: 2px 0; border: 0; }
   .data-table.known .row { justify-content: flex-start; flex-wrap: wrap; }
 }
+
+/* A session of repeated runs (e.g. a heater cycling on its thermostat) behind its runs */
+.tl-session { position: absolute; top: 5px; bottom: 5px; border-radius: 2px; opacity: 0.3; pointer-events: none; }
+.redetect { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px; }

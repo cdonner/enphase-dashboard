@@ -22,6 +22,7 @@ const (
 	stableTolW    = 25.0            // W: allowed spread within a stable window...
 	stableTolPct  = 0.03            // ...or this share of the level, whichever is larger
 	mergeWindow   = 2 * time.Second // edges on different legs this close are one event
+	maxLegLag     = 8 * time.Second // longest wait for a slower leg of the same event
 	maxOpenRuns   = 64
 )
 
@@ -62,7 +63,8 @@ type legTracker struct {
 }
 
 type pendingEdge struct {
-	at     int64
+	at     int64 // when the first leg started moving
+	seen   int64 // when the first leg settled (the merge window runs from here)
 	dp, dq []float64
 	base   []float64 // leg levels before the step
 	moved  []bool    // legs that contributed to the step
@@ -95,6 +97,7 @@ type DetectorState struct {
 const (
 	restoreOpenWithin = 10 * time.Minute // open runs survive a restart this short
 	alreadyOnMinW     = 1000.0           // excess over the base load reported at startup
+	orphanWithin      = 12 * time.Hour   // an unmatched big switch-off this soon after a start is recorded
 )
 
 func (d *Detector) State(now int64) DetectorState {
@@ -187,7 +190,7 @@ func (d *Detector) Add(at int64, p, q []float64) {
 			d.legs[i] = &legTracker{}
 		}
 	}
-	if d.pending != nil && at-d.pending.at > mergeWindow.Milliseconds() {
+	if d.pending != nil && at-d.pending.seen > mergeWindow.Milliseconds() && !d.otherLegMoving(at) {
 		d.flush()
 	}
 	for i, l := range d.legs {
@@ -197,7 +200,7 @@ func (d *Detector) Add(at int64, p, q []float64) {
 		}
 		if d.pending == nil {
 			n := len(p)
-			d.pending = &pendingEdge{at: moveAt, dp: make([]float64, n), dq: make([]float64, n),
+			d.pending = &pendingEdge{at: moveAt, seen: at, dp: make([]float64, n), dq: make([]float64, n),
 				base: make([]float64, n), moved: make([]bool, n)}
 		}
 		if !d.pending.moved[i] {
@@ -211,6 +214,22 @@ func (d *Detector) Add(at int64, p, q []float64) {
 		d.closeVanished(at)
 		d.trackBase(at)
 	}
+}
+
+// otherLegMoving: a leg not yet part of the pending edge started moving at about the same
+// time and hasn't settled - e.g. one leg of a 240 V heater ramping a few seconds longer.
+// The edge waits for it, for at most maxLegLag.
+func (d *Detector) otherLegMoving(at int64) bool {
+	e := d.pending
+	if at-e.seen > maxLegLag.Milliseconds() {
+		return false
+	}
+	for i, l := range d.legs {
+		if !e.moved[i] && l.moveAt != 0 && abs64(l.moveAt-e.at) <= mergeWindow.Milliseconds() {
+			return true
+		}
+	}
+	return false
 }
 
 // closeVanished closes open runs whose load is no longer there even though no matching
@@ -321,29 +340,29 @@ func (d *Detector) matchOff(e *pendingEdge) {
 	tol := math.Max(edgeThreshold, 0.2*offSum)
 
 	best, bestErr, partial := -1, math.Inf(1), false
+	splitFrom, splitSize := -1, math.Inf(1)
 	for i := len(d.open) - 1; i >= 0; i-- {
 		r := d.open[i]
 		if len(r.DP) != len(off) {
 			continue
 		}
 		var mismatch float64
-		fits := true // off fits inside r: no bigger on any leg, and only on legs r uses
 		for k := range off {
 			mismatch += math.Abs(r.DP[k] - off[k])
-			if off[k] > r.DP[k]+tol/2 || (off[k] > edgeThreshold && r.DP[k] <= edgeThreshold) {
-				fits = false
-			}
 		}
 		if mismatch <= tol && mismatch < bestErr {
-			best, bestErr, partial = i, mismatch, false
-		} else if best < 0 && fits && r.power() > offSum+tol {
-			best, partial = i, true
+			best, bestErr = i, mismatch
+		} else if r.power() > offSum+tol && splitFits(off, offSum, r) && r.power() < splitSize {
+			splitFrom, splitSize = i, r.power()
 		}
+	}
+	if best < 0 && splitFrom >= 0 {
+		best, partial = splitFrom, true
 	}
 	if best < 0 {
 		// An off without a matching on: started before we were watching, or merged with
 		// another step. A big one is recorded from the start of monitoring, marked as such.
-		if offSum >= alreadyOnMinW && d.firstAt > 0 {
+		if offSum >= alreadyOnMinW && d.firstAt > 0 && e.at-d.firstAt < orphanWithin.Milliseconds() {
 			end := e.at
 			d.closed = append(d.closed, Run{Start: d.firstAt, End: &end, DP: off,
 				DQ: make([]float64, len(off)), StartedBefore: true})
@@ -367,6 +386,23 @@ func (d *Detector) matchOff(e *pendingEdge) {
 		d.open[best].DP[k] -= off[k]
 	}
 	d.closed = append(d.closed, part)
+}
+
+// splitFits: an off step may be split off a larger run only if it looks like part of it -
+// the same legs (a 240 V heater element drops on both legs, a 120 V load on one) in about
+// the same proportions, and no bigger than the run on any leg. Otherwise an unrelated
+// small switch-off would be carved out of e.g. a running sauna, which then never closes.
+func splitFits(off []float64, offSum float64, r Run) bool {
+	rp := r.power()
+	for k := range off {
+		if (off[k] > edgeThreshold) != (r.DP[k] > edgeThreshold) || off[k] > r.DP[k]+edgeThreshold {
+			return false
+		}
+		if math.Abs(off[k]/offSum-r.DP[k]/rp) > 0.2 {
+			return false
+		}
+	}
+	return true
 }
 
 // drainClosed returns runs closed since the last call.

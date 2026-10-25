@@ -482,6 +482,16 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		writeJSONResponse(w, 200, map[string]any{"columns": "time, P per leg, Q per leg", "samples": rows})
 	}))
 
+	// Run the detector again over a day's recorded raw readings and replace its runs.
+	mux.HandleFunc("POST /api/appliances/redetect", func(w http.ResponseWriter, r *http.Request) {
+		n, err := s.redetect(r.URL.Query().Get("date"))
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSONResponse(w, 200, map[string]int{"runs": n})
+	})
+
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()

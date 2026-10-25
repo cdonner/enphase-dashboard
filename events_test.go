@@ -441,3 +441,103 @@ func TestCoStartsAndIgnore(t *testing.T) {
 		}
 	}
 }
+
+func TestDetectorSaunaWithCyclingRange(t *testing.T) {
+	d := NewDetector()
+	// Sauna: three 2.5 kW elements (1.25 kW per leg) on at t=10, dropping at t=1500, 1560
+	// and 2400. Meanwhile a range element (2.3 kW per leg) cycles 60 s on / 120 s off from
+	// t=200 to t=1100, and a 550 W load on leg 2 switches on and off (at slightly different
+	// times than the range). None of the switch-offs may be carved out of the sauna.
+	feed(d, 0, 2500, func(t int) []float64 {
+		p := []float64{400, 600}
+		switch {
+		case t >= 10 && t < 1500:
+			p[0], p[1] = p[0]+3750, p[1]+3750
+		case t >= 1500 && t < 1560:
+			p[0], p[1] = p[0]+2500, p[1]+2500
+		case t >= 1560 && t < 2400:
+			p[0], p[1] = p[0]+1250, p[1]+1250
+		}
+		if t >= 200 && t < 1100 && (t-200)%180 < 60 {
+			p[0], p[1] = p[0]+2300, p[1]+2300
+		}
+		if t >= 235 && t < 1200 && (t-235)%150 < 90 {
+			p[1] += 550
+		}
+		return p
+	}, 0)
+	var sauna, rng []Run
+	for _, r := range d.drainClosed() {
+		switch sig := describe(r.DP, r.DQ); {
+		case sig.Legs == "240 V" && near(sig.PowerW, 2500, 150):
+			sauna = append(sauna, r)
+		case sig.Legs == "240 V" && near(sig.PowerW, 4600, 200):
+			rng = append(rng, r)
+		}
+	}
+	if len(rng) != 5 {
+		t.Errorf("got %d range cycles, want 5", len(rng))
+	}
+	if len(sauna) != 3 {
+		t.Fatalf("got %d sauna element runs, want 3: %+v", len(sauna), sauna)
+	}
+	for i, end := range []int64{1500, 1560, 2400} {
+		if sauna[i].Start/1000 != 10 || !near(float64(*sauna[i].End/1000), float64(end), 3) {
+			t.Errorf("sauna element %d ran %d-%d s, want 10-%d", i, sauna[i].Start/1000, *sauna[i].End/1000, end)
+		}
+	}
+}
+
+func TestDetectorStaggeredLegs(t *testing.T) {
+	d := NewDetector()
+	// A 240 V element switching off where one leg settles 3 s after the other (ramp).
+	feed(d, 0, 300, func(t int) []float64 {
+		p := []float64{500, 500}
+		if t >= 10 && t < 200 {
+			p[0], p[1] = 1600, 1600
+		}
+		if t >= 200 && t < 204 {
+			p[0], p[1] = 1600-float64(t-199)*250, 500
+		}
+		return p
+	}, 0)
+	runs := d.drainClosed()
+	if len(runs) != 1 || len(d.open) != 0 {
+		t.Fatalf("got %d closed, %d open, want one closed 240 V run: %+v %+v", len(runs), len(d.open), runs, d.open)
+	}
+}
+
+func TestDayRunsSurviveMidnight(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	today := dayKey(time.Now())
+	yesterday := dayKey(time.Now().AddDate(0, 0, -1))
+	// Shortly after midnight, before any run of the new day closed, the UI asks for today:
+	// that must not be cached as an empty past day.
+	s.events.date = yesterday
+	for i := 0; i < 5; i++ {
+		end := time.Now().AddDate(0, 0, -1).UnixMilli()
+		s.events.runs = append(s.events.runs, Run{Start: end - 1000, End: &end, DP: []float64{100, 0}})
+	}
+	s.events.dirty = true
+	s.loadDayRuns(today)
+	if _, cached := s.pastDays[today]; cached {
+		t.Error("today was cached as a past day")
+	}
+	// The first run of today closes, then a run that started yesterday closes: yesterday
+	// keeps all its runs.
+	end := nowMs()
+	s.recordRuns([]Run{{Start: end - 1000, End: &end, DP: []float64{200, 0}}})
+	started := time.Now().AddDate(0, 0, -1).UnixMilli()
+	s.recordRuns([]Run{{Start: started, End: &end, DP: []float64{300, 0}}})
+	var d dayRuns
+	s.readJSON("events/"+yesterday+".json", &d)
+	if len(d.Runs) != 6 {
+		t.Errorf("yesterday has %d runs on disk, want 6", len(d.Runs))
+	}
+	if got := len(s.loadDayRuns(yesterday)); got != 6 {
+		t.Errorf("yesterday has %d runs in memory, want 6", got)
+	}
+	if s.events.date != today || len(s.events.runs) != 1 {
+		t.Errorf("today: %s with %d runs", s.events.date, len(s.events.runs))
+	}
+}

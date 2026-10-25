@@ -527,6 +527,10 @@ Each line is `time(ms)  P per leg  Q per leg`. Comparing this with an independen
 an appliance ran (a thermostat's heating periods, a temperature logger in a heating duct) is the
 most reliable way to improve detection.
 
+**Re-detect this day** (under the timeline) runs the current detector again over a day's recorded
+readings and replaces that day's runs, for any of the last 7 days. Use it after an update that
+improves detection, or to recover a day whose runs are missing.
+
 ## Data and security
 
 Everything is stored in the data directory (`DATA_DIR`):

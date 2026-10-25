@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, usePoll } from './api.js';
 import { fmtTime, fmtW, fmtWh } from './format.js';
 
@@ -158,9 +158,12 @@ function Timeline({ date, activities, onName, onChanged }) {
         named: !!a.appliance,
         type: typeOf(a.signature.legs),
         spans: [],
+        sessions: [],
         energy: 0,
       };
       row.spans.push(...a.spans.map((sp) => ({ s: [sp.s, sp.e], sp, a })));
+      // A session: repeated runs close together (a heater cycling on its thermostat).
+      if (a.runs > 1) row.sessions.push([a.start, a.end ?? Date.now()]);
       row.energy += a.energyWh;
       byRow.set(key, row);
     }
@@ -213,6 +216,17 @@ function Timeline({ date, activities, onName, onChanged }) {
             onPointerLeave={() => setHover(null)}
             onClick={(e) => setSelected(nearest(r, e))}
           >
+            {r.sessions.map(([s0, s1], i) => (
+              <span
+                key={`s${i}`}
+                className="tl-session"
+                style={{
+                  left: pct(s0),
+                  width: `max(2px, calc(${pct(s1)} - ${pct(s0)}))`,
+                  background: r.type.color,
+                }}
+              />
+            ))}
             {r.spans.map(({ s, sp, a }, i) => (
               <span
                 key={i}
@@ -708,6 +722,33 @@ function Known({ appliances, onChanged }) {
   );
 }
 
+// Run the detector again over the day's recorded raw readings (kept for 7 days).
+function Redetect({ date, onDone }) {
+  const [state, setState] = useState(null);
+  useEffect(() => setState(null), [date]);
+  return (
+    <p className="muted small redetect">
+      <button
+        className="ghost"
+        disabled={state === 'busy'}
+        onClick={async () => {
+          setState('busy');
+          try {
+            const r = await api(`/appliances/redetect?date=${date}`, { method: 'POST' });
+            setState(`Found ${r.runs} runs.`);
+            onDone();
+          } catch (e) {
+            setState(e.message);
+          }
+        }}
+      >
+        {state === 'busy' ? 'Detecting…' : 'Re-detect this day'}
+      </button>
+      {state && state !== 'busy' ? state : 'Runs the detector again over the recorded readings (last 7 days).'}
+    </p>
+  );
+}
+
 export default function Appliances() {
   const today = dateKey(new Date());
   const [date, setDate] = useState(today);
@@ -823,6 +864,7 @@ export default function Appliances() {
           ))}
         </datalist>
         <Timeline date={date} activities={acts} onName={nameSignature} onChanged={reload} />
+        <Redetect date={date} onDone={reload} />
         <details className="table-view">
           <summary>Table</summary>
           <div className="table-scroll">

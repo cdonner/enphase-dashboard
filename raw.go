@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -190,4 +191,66 @@ func (s *Server) rawSamples(from, to int64) ([]rawSample, error) {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].At < all[j].At })
 	return all, nil
+}
+
+// redetect runs the detector again over the recorded raw readings of a day (e.g. after a
+// detector update, or to recover a day whose runs were lost) and replaces its stored runs.
+// It starts an hour early so loads already on at midnight are seen switching on, and runs
+// a few hours past midnight so runs that started late can close. Returns the number of runs.
+func (s *Server) redetect(date string) (int, error) {
+	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	if err != nil {
+		return 0, err
+	}
+	from, next := day.Add(-time.Hour).UnixMilli(), day.AddDate(0, 0, 1).UnixMilli()
+	to := min(next+3*time.Hour.Milliseconds(), nowMs())
+	if day.Before(time.Now().AddDate(0, 0, -rawKeepDays)) {
+		return 0, fmt.Errorf("raw readings are only kept for %d days", rawKeepDays)
+	}
+	s.mu.Lock()
+	mem := s.raw.memory(from, to)
+	s.mu.Unlock()
+	seen := map[int64]bool{}
+	for _, x := range mem {
+		seen[x.At] = true
+	}
+	all := mem
+	for _, x := range s.raw.fromFiles(from, to) {
+		if !seen[x.At] {
+			all = append(all, x)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].At < all[j].At })
+	if len(all) == 0 {
+		return 0, errors.New("no raw readings recorded for that day")
+	}
+
+	d := NewDetector()
+	runs := []Run{}
+	for _, x := range all {
+		p, q := make([]float64, len(x.P)), make([]float64, len(x.Q))
+		for i := range x.P {
+			p[i], q[i] = float64(x.P[i]), float64(x.Q[i])
+		}
+		d.Add(x.At, p, q)
+		for _, r := range d.drainClosed() {
+			if r.Start >= day.UnixMilli() && r.Start < next && !(r.StartedBefore && r.Start < day.UnixMilli()+time.Minute.Milliseconds()) {
+				runs = append(runs, r)
+			}
+		}
+	}
+	sort.Slice(runs, func(i, j int) bool { return runs[i].Start < runs[j].Start })
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if date == s.events.date {
+		// Today: the live detector carries on; only its closed runs are replaced.
+		s.events.runs, s.events.dirty = runs, true
+		s.persistEvents()
+	} else if err := s.writeJSON("events/"+date+".json", dayRuns{Runs: runs}, 0o644); err != nil {
+		return 0, err
+	}
+	delete(s.pastDays, date)
+	s.clusterCache.at = 0
+	return len(runs), nil
 }

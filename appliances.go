@@ -195,6 +195,11 @@ func (s *Server) loadDayRuns(date string) []Run {
 	}
 	var d dayRuns
 	s.readJSON("events/"+date+".json", &d)
+	if date >= dayKey(time.Now()) {
+		// Today (before its first run closed) or later: don't cache, or the empty list
+		// would later stand in for the whole day and be written over its file.
+		return d.Runs
+	}
 	if s.pastDays == nil || len(s.pastDays) > 2*clusterDays {
 		s.pastDays = map[string][]Run{}
 	}
@@ -206,7 +211,15 @@ func (s *Server) loadDayRuns(date string) []Run {
 func (s *Server) recordRuns(runs []Run) {
 	today := dayKey(time.Now())
 	if s.events.date != today {
-		s.events.date, s.events.runs = today, s.loadDayRuns(today)
+		// New day: save the finished one and keep it as a past day.
+		if s.events.date != "" {
+			s.persistEvents()
+			if s.pastDays != nil {
+				s.pastDays[s.events.date] = s.events.runs
+			}
+		}
+		runs := s.loadDayRuns(today) // a restart today may already have saved some
+		s.events.date, s.events.runs = today, runs
 		s.events.dirty = false
 	}
 	for _, r := range runs {

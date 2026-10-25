@@ -39,3 +39,36 @@ func TestRawRecorder(t *testing.T) {
 		t.Error("ranges over 6 h should be refused")
 	}
 }
+
+func TestRedetect(t *testing.T) {
+	s := NewServer(Config{DataDir: t.TempDir()})
+	y := time.Now().AddDate(0, 0, -1)
+	date := dayKey(y)
+	day := time.Date(y.Year(), y.Month(), y.Day(), 0, 0, 0, 0, time.Local)
+	// Yesterday 20:00-21:00 recorded to disk: a 2 kW heater on 20:10-20:40.
+	var samples []rawSample
+	for t := day.Add(20 * time.Hour); t.Before(day.Add(21 * time.Hour)); t = t.Add(time.Second) {
+		p := float32(300)
+		if !t.Before(day.Add(20*time.Hour+10*time.Minute)) && t.Before(day.Add(20*time.Hour+40*time.Minute)) {
+			p += 2000
+		}
+		samples = append(samples, rawSample{At: t.UnixMilli(), P: []float32{p, 200}, Q: []float32{0, 0}})
+	}
+	s.raw.writeHour(samples)
+	// The stored day lost its runs (the bug this recovers from).
+	s.writeJSON("events/"+date+".json", dayRuns{Runs: []Run{}}, 0o644)
+	if len(s.loadDayRuns(date)) != 0 {
+		t.Fatal("setup")
+	}
+	n, err := s.redetect(date)
+	if err != nil || n != 1 {
+		t.Fatalf("redetect: %d runs, %v", n, err)
+	}
+	runs := s.loadDayRuns(date)
+	if len(runs) != 1 || !near(runs[0].DP[0], 2000, 30) || (*runs[0].End-runs[0].Start)/60000 != 30 {
+		t.Errorf("runs %+v", runs)
+	}
+	if _, err := s.redetect(dayKey(time.Now().AddDate(0, 0, -30))); err == nil {
+		t.Error("days without raw readings should be refused")
+	}
+}
