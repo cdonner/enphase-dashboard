@@ -266,3 +266,12 @@ ul.co-start { list-style: none; margin: 0; padding: 4px 8px; display: grid; gap:
 .cluster.group { border-color: var(--accent); }
 .group-members { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .group-members li { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* Known appliances: one stacked card per appliance on phones instead of a three-column table */
+.sig-list li { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .data-table.known, .data-table.known tbody, .data-table.known tr, .data-table.known td { display: block; width: auto; }
+  .data-table.known tr { padding: 8px 0; border-bottom: 1px solid var(--grid); }
+  .data-table.known td { padding: 2px 0; border: 0; }
+  .data-table.known .row { justify-content: flex-start; flex-wrap: wrap; }
+}
