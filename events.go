@@ -270,7 +270,7 @@ func (d *Detector) checkBalance(at int64) {
 		}
 		if best >= 0 {
 			r := d.open[best]
-			end := d.overSince[k]
+			end := max(d.overSince[k], r.Start)
 			r.End, r.Base = &end, nil
 			d.closed = append(d.closed, r)
 			d.open = append(d.open[:best], d.open[best+1:]...)

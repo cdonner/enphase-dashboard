@@ -621,10 +621,22 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 	// The React app; unknown paths fall back to index.html.
 	files := http.FileServerFS(dist)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if p := path.Clean(r.URL.Path); p != "/" {
+		p := path.Clean(r.URL.Path)
+		if p != "/" {
 			if _, err := fs.Stat(dist, p[1:]); err != nil {
-				r.URL.Path = "/"
+				if strings.HasPrefix(p, "/assets/") {
+					// A page from before an update asking for its old script: a 404, not the
+					// app's HTML, which the browser can't run (a blank page).
+					http.NotFound(w, r)
+					return
+				}
+				r.URL.Path, p = "/", "/"
 			}
+		}
+		if strings.HasPrefix(p, "/assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable") // names carry a content hash
+		} else {
+			w.Header().Set("Cache-Control", "no-cache") // always check for a new version
 		}
 		files.ServeHTTP(w, r)
 	})
