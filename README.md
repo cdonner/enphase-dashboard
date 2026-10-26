@@ -355,6 +355,10 @@ jump to a new steady level of at least about 60 W. Each step is described by:
 Steps up and down are paired into runs. Run times show on a timeline for each day, and repeated
 runs of the same appliance are grouped. If an appliance switches off in stages, such as a sauna heater
 turning off one element at a time, each stage is split off its run.
+A step smaller than 5% of a large running load on the same legs, such as an EV charger changing
+its current, adjusts that load instead of counting as an appliance of its own. And the loads that
+are on can't add up to more than a leg draws: if they do for a minute, the run whose switch-off was
+missed is closed (Hart's conservation check).
 
 **Naming appliances.** *Needs a name* lists the unnamed signatures of the last 14 days, most energy
 first, so you can name them in batches. You can also click a bar on the timeline and name it there.
@@ -391,6 +395,9 @@ things help:
 
 - **Size filter.** *Show unnamed loads from* (default 150 W) hides smaller unnamed runs and
   signatures. Named appliances always show.
+- **One-time loads.** An unnamed signature seen only once in two weeks and under 1 kW is hidden by
+  default: it is usually two loads switching in the same second, not an appliance. Untick *Hide
+  one-time loads* to see them.
 - **Relations and groups.** The dashboard compares every signature with every other one and with
   the named appliances over the last 14 days. It counts how often they *start together* (within 15
   seconds) and how often one *runs during* the other, like an igniter during a furnace's blower run.

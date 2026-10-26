@@ -321,8 +321,10 @@ type Activity struct {
 	ApplianceID *string   `json:"applianceId"` // id, if identified
 	ClusterKey  string    `json:"clusterKey"`
 	Spans       []Span    `json:"spans"` // the individual runs, for the timeline
-	lastEnd     int64
-	running     bool
+	// Unnamed: runs of its signature in the last clusterDays days (1 = seen only once).
+	Seen    int `json:"seen,omitempty"`
+	lastEnd int64
+	running bool
 }
 
 // Span is one run within an activity.
@@ -387,8 +389,29 @@ func (s *Server) activities(runs []Run, open []Run, now int64) []Activity {
 			out[i].End = ptr(out[i].lastEnd)
 		}
 		out[i].ClusterKey = clusterKey(out[i].Signature.DP)
+		if out[i].Appliance == nil {
+			out[i].Seen = max(out[i].Runs, s.signatureRuns(out[i].Signature))
+		}
 	}
 	return out
+}
+
+// sigCount is an unnamed signature's centroid and its number of runs.
+type sigCount struct {
+	sig  Sig
+	runs int
+}
+
+// signatureRuns: how many runs of this unnamed signature the last clusterDays days hold.
+// Caller holds s.mu.
+func (s *Server) signatureRuns(sig Signature) int {
+	s.clustersAndGroups()
+	for _, c := range s.clusterCache.seen {
+		if sameSignature(c.sig, Sig{DP: sig.DP, DQ: sig.DQ}) {
+			return c.runs
+		}
+	}
+	return 0
 }
 
 // ---------- clusters of unnamed runs ----------
@@ -451,12 +474,12 @@ func (s *Server) clustersAndGroups() ([]Cluster, []Group) {
 	if s.clusterCache.at > 0 && nowMs()-s.clusterCache.at < clusterCacheFor.Milliseconds() {
 		return s.clusterCache.clusters, s.clusterCache.groups
 	}
-	c, g := s.computeClusters()
-	s.clusterCache.at, s.clusterCache.clusters, s.clusterCache.groups = nowMs(), c, g
+	c, g, seen := s.computeClusters()
+	s.clusterCache.at, s.clusterCache.clusters, s.clusterCache.groups, s.clusterCache.seen = nowMs(), c, g, seen
 	return c, g
 }
 
-func (s *Server) computeClusters() ([]Cluster, []Group) {
+func (s *Server) computeClusters() ([]Cluster, []Group, []sigCount) {
 	type acc struct {
 		dp, dq  []float64
 		n       int
@@ -517,6 +540,10 @@ func (s *Server) computeClusters() ([]Cluster, []Group) {
 	}
 	out := []Cluster{}
 	var spans [][]span
+	seen := make([]sigCount, len(groups))
+	for i, g := range groups {
+		seen[i] = sigCount{Sig{DP: g.dp, DQ: g.dq}, g.n}
+	}
 	for _, g := range groups {
 		if g.n < minClusterRuns {
 			continue
@@ -575,5 +602,5 @@ func (s *Server) computeClusters() ([]Cluster, []Group) {
 			kept = append(kept, g)
 		}
 	}
-	return out, kept
+	return out, kept, seen
 }
