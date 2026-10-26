@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, usePoll } from './api.js';
 import { fmtTime, fmtW, fmtWh } from './format.js';
 
@@ -79,89 +79,95 @@ function shiftDate(key, days) {
 function Selected({ sel, onName, onChanged, onClose }) {
   const { a, sp, s } = sel;
   const [labelText, setLabelText] = useState(sp.label ?? '');
-  // The panel sits below every row, often off screen; bring it into view so the click visibly does something.
-  const ref = useRef(null);
-  useEffect(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), [sel]);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
   const sigUrl = `/appliances/${a.applianceId}/signatures/${sp.sig}`;
   const done = () => {
     onChanged();
     onClose();
   };
+  // A popup over the page: with many rows, a panel below the timeline is out of sight.
   return (
-    <div className="tl-selected" ref={ref}>
-      <div className="tl-selected-head">
-        <strong>
-          {label(a)}
-          {sp.label ? ` · ${sp.label}` : ''}
-        </strong>{' '}
-        <span className="muted small">
-          {fmtTime(s[0])} · {fmtDur((s[1] - s[0]) / 1000)} · {sigText(sp.desc)}
-        </span>
-        <button className="ghost" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      {!a.appliance ? (
-        <div className="row name-row">
-          <NameForm
-            onSave={async (name) => {
-              await onName(name, sp.desc);
-              onClose();
-            }}
-          />
-          <button
-            className="ghost"
-            title="Hide this signature from the timeline and the naming list"
-            onClick={async () => {
-              await api('/appliances', { method: 'POST', body: { ignore: true, dp: sp.desc.dp, dq: sp.desc.dq } });
-              onChanged();
-              onClose();
-            }}
-          >
-            Ignore
+    <div className="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal tl-selected" role="dialog" aria-modal="true" aria-label="Run details">
+        <div className="tl-selected-head">
+          <strong>
+            {label(a)}
+            {sp.label ? ` · ${sp.label}` : ''}
+          </strong>{' '}
+          <span className="muted small">
+            {fmtTime(s[0])} · {fmtDur((s[1] - s[0]) / 1000)}
+            {a.appliance ? ` · ${sigText(sp.desc)}` : ''}
+          </span>
+          <button className="ghost" onClick={onClose}>
+            Close
           </button>
         </div>
-      ) : (
-        <div className="sel-actions">
-          <form
-            className="row name-form"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              await api(sigUrl, { method: 'PUT', body: { label: labelText } });
-              done();
-            }}
-          >
-            <input
-              value={labelText}
-              onChange={(e) => setLabelText(e.target.value)}
-              placeholder="Label for this signature, e.g. warm-up"
-              aria-label="Signature label"
+        {!a.appliance ? (
+          <div className="row name-row">
+            <NameForm
+              onSave={async (name) => {
+                await onName(name, sp.desc);
+                onClose();
+              }}
             />
-            <button type="submit" className="ghost">
-              Save label
-            </button>
-          </form>
-          <NameForm
-            placeholder="Move to another appliance (or a new name)"
-            button="Move"
-            onSave={async (name) => {
-              await api(`${sigUrl}/move`, { method: 'POST', body: { name } });
-              done();
-            }}
-          />
-          <div className="row">
             <button
-              className="ghost danger"
+              className="ghost"
+              title="Hide this signature from the timeline and the naming list"
               onClick={async () => {
-                await api(sigUrl, { method: 'DELETE' });
+                await api('/appliances', { method: 'POST', body: { ignore: true, dp: sp.desc.dp, dq: sp.desc.dq } });
+                onChanged();
+                onClose();
+              }}
+            >
+              Ignore
+            </button>
+          </div>
+        ) : (
+          <div className="sel-actions">
+            <form
+              className="row name-form"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                await api(sigUrl, { method: 'PUT', body: { label: labelText } });
                 done();
               }}
             >
-              Remove from {a.appliance}
-            </button>
+              <input
+                value={labelText}
+                onChange={(e) => setLabelText(e.target.value)}
+                placeholder="Label for this signature, e.g. warm-up"
+                aria-label="Signature label"
+              />
+              <button type="submit" className="ghost">
+                Save label
+              </button>
+            </form>
+            <NameForm
+              placeholder="Move to another appliance (or a new name)"
+              button="Move"
+              onSave={async (name) => {
+                await api(`${sigUrl}/move`, { method: 'POST', body: { name } });
+                done();
+              }}
+            />
+            <div className="row">
+              <button
+                className="ghost danger"
+                onClick={async () => {
+                  await api(sigUrl, { method: 'DELETE' });
+                  done();
+                }}
+              >
+                Remove from {a.appliance}
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

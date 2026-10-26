@@ -302,3 +302,14 @@ ul.co-start { list-style: none; margin: 0; padding: 4px 8px; display: grid; gap:
 .clean-slate-confirm { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--critical); border-radius: 8px; }
 .clean-slate-confirm p { margin: 0 0 8px; }
 button.danger:not(.ghost) { background: var(--critical); border-color: var(--critical); color: #fff; }
+
+/* Run details popup */
+.modal-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal-backdrop .modal { background: var(--surface-1); color: var(--text-primary); width: min(640px, 100%); max-height: calc(100vh - 32px); overflow: auto; margin: 0; padding: 14px 16px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3); }
+@media (max-width: 600px) {
+  .modal-backdrop { align-items: flex-end; padding: 0; }
+  .modal-backdrop .modal { width: 100%; border-radius: 12px 12px 0 0; max-height: 85vh; }
+}
+.crash { margin: 24px auto; max-width: 640px; display: grid; gap: 8px; justify-items: start; }
+.tl-label .rect-key { flex-shrink: 0; }
+.tl-label span:last-child { overflow: hidden; text-overflow: ellipsis; }
