@@ -573,3 +573,51 @@ func TestDayRunsSurviveMidnight(t *testing.T) {
 		t.Errorf("today: %s with %d runs", s.events.date, len(s.events.runs))
 	}
 }
+
+func TestEVCurrentChangesAdjustTheRun(t *testing.T) {
+	d := NewDetector()
+	// A 7 kW EV charge on both legs that steps up 150 W, then down 200 W, before stopping;
+	// a 1 kW 120 V kettle on leg 1 in between stays a run of its own.
+	feed(d, 0, 900, func(t int) []float64 {
+		p := []float64{300, 300}
+		if t >= 10 && t < 800 {
+			p[0], p[1] = p[0]+3500, p[1]+3500
+		}
+		if t >= 200 && t < 800 {
+			p[0], p[1] = p[0]+75, p[1]+75
+		}
+		if t >= 400 && t < 800 {
+			p[0], p[1] = p[0]-100, p[1]-100
+		}
+		if t >= 500 && t < 560 {
+			p[0] += 1000
+		}
+		return p
+	}, 0)
+	runs := d.drainClosed()
+	if len(runs) != 2 || len(d.open) != 0 {
+		t.Fatalf("runs %+v, open %+v", runs, d.open)
+	}
+	if !near(runs[0].power(), 1000, 30) || !near(runs[1].power(), 6950, 30) || runs[1].Start != 10_000 || *runs[1].End != 800_000 {
+		t.Errorf("runs %+v", runs)
+	}
+}
+
+func TestBalanceClosesStuckRun(t *testing.T) {
+	d := NewDetector()
+	level := func(int) []float64 { return []float64{300, 300} }
+	const t0 = 1_800_000_000 // s; the base-load history is kept per hour of the clock
+	feed(d, t0, 120, level, 0)
+	// A run that claims 2.3 kW on leg 2 while the leg draws only its base load, and that
+	// the vanished-load check can't close (no levels from before it, e.g. an old state).
+	d.open = append(d.open, Run{Start: (t0 + 50) * 1000, DP: []float64{0, 2325}, DQ: []float64{0, 0}})
+	feed(d, t0+120, 30, level, 0)
+	if len(d.open) != 1 {
+		t.Fatal("closed before balanceHold")
+	}
+	feed(d, t0+150, 60, level, 0)
+	runs := d.drainClosed()
+	if len(d.open) != 0 || len(runs) != 1 || *runs[0].End != (t0+120)*1000 {
+		t.Errorf("open %+v, closed %+v", d.open, runs)
+	}
+}

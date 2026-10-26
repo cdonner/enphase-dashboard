@@ -98,6 +98,7 @@ type Server struct {
 		at       int64
 		clusters []Cluster
 		groups   []Group
+		seen     []sigCount // every unnamed signature, also those not listed
 	}
 	inverters struct {
 		at   int64

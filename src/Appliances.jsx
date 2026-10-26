@@ -21,13 +21,31 @@ function loadMinW() {
   }
 }
 
-// Drops unnamed runs below minW; activities left without runs disappear.
-function filterSmall(acts, minW) {
+// A one-time load: an unnamed signature seen only once in two weeks, under 1 kW. Mostly
+// two loads switching in the same second, or a stray reading; a real appliance comes back.
+const ONCE_MAX_W = 1000;
+const isOnce = (runs, sig) => runs <= 1 && sig.powerW < ONCE_MAX_W;
+
+function loadHideOnce() {
+  try {
+    return localStorage.getItem('appliances.hideOnce') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+// Drops unnamed runs below minW, and one-time loads if hideOnce; activities left without
+// runs disappear.
+function filterSmall(acts, minW, hideOnce) {
   let hidden = 0;
   const out = [];
   for (const a of acts) {
     if (a.appliance) {
       out.push(a);
+      continue;
+    }
+    if (hideOnce && isOnce(a.seen ?? a.runs, a.signature)) {
+      hidden += a.spans.length;
       continue;
     }
     const spans = a.spans.filter((sp) => sp.desc.powerW >= minW);
@@ -1171,9 +1189,20 @@ export default function Appliances() {
       // not persisted
     }
   };
-  const [acts, hiddenRuns] = filterSmall((day.data?.date === date && day.data.activities) || [], minW);
+  const [hideOnce, setHideOnce] = useState(loadHideOnce);
+  const chooseHideOnce = (v) => {
+    setHideOnce(v);
+    try {
+      localStorage.setItem('appliances.hideOnce', String(v));
+    } catch {
+      // not persisted
+    }
+  };
+  const [acts, hiddenRuns] = filterSmall((day.data?.date === date && day.data.activities) || [], minW, hideOnce);
   const allClusters = lists.data?.unnamed ?? [];
-  const clusters = allClusters.filter((c) => c.signature.powerW >= minW);
+  const clusters = allClusters.filter(
+    (c) => c.signature.powerW >= minW && !(hideOnce && isOnce(c.runs, c.signature)),
+  );
   const running = acts.filter((a) => a.end == null);
   const named = acts.filter((a) => a.appliance);
   const sum = (xs) => xs.reduce((s, a) => s + a.energyWh, 0);
@@ -1242,9 +1271,13 @@ export default function Appliances() {
               ))}
             </select>
           </label>
+          <label className="small">
+            <input type="checkbox" checked={hideOnce} onChange={(e) => chooseHideOnce(e.target.checked)} /> Hide
+            one-time loads under {fmtW(ONCE_MAX_W)}
+          </label>
           {hiddenRuns > 0 && (
             <span className="muted small">
-              {hiddenRuns} smaller {hiddenRuns === 1 ? 'run' : 'runs'} hidden
+              {hiddenRuns} {hiddenRuns === 1 ? 'run' : 'runs'} hidden
             </span>
           )}
         </div>
@@ -1317,8 +1350,9 @@ export default function Appliances() {
           <Unnamed clusters={clusters} onChanged={reload} />
           {allClusters.length > clusters.length && (
             <p className="muted small">
-              {allClusters.length - clusters.length} smaller{' '}
-              {allClusters.length - clusters.length === 1 ? 'signature' : 'signatures'} hidden (under {fmtW(minW)}).
+              {allClusters.length - clusters.length}{' '}
+              {allClusters.length - clusters.length === 1 ? 'signature' : 'signatures'} hidden (under {fmtW(minW)}
+              {hideOnce ? ', or seen only once' : ''}).
             </p>
           )}
         </section>

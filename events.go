@@ -24,6 +24,14 @@ const (
 	mergeWindow   = 2 * time.Second // edges on different legs this close are one event
 	maxLegLag     = 8 * time.Second // longest wait for a slower leg of the same event
 	maxOpenRuns   = 64
+
+	// A step this small relative to a big run on the same legs adjusts that run instead of
+	// being a load of its own: an EV charger changing its current, a heater's level drifting.
+	adjustFrac   = 0.05
+	adjustMinRun = 2000.0 // W
+	// The open runs may claim more than a leg draws above its base load for this long
+	// before the best-fitting one is closed (its off step was missed).
+	balanceHold = time.Minute
 )
 
 // Run is one appliance (or one stage of one) switched on, and off again unless End is nil.
@@ -82,6 +90,8 @@ type Detector struct {
 	hourSeen [][24]int64 // unix hour each bucket belongs to
 	started  bool        // the first full set of stable levels has been checked
 	firstAt  int64       // time of the first reading since this start (ms)
+
+	overSince []int64 // per leg: when the open runs started claiming more than the leg draws
 }
 
 func NewDetector() *Detector { return &Detector{} }
@@ -212,7 +222,98 @@ func (d *Detector) Add(at int64, p, q []float64) {
 	}
 	if d.pending == nil {
 		d.closeVanished(at)
+		d.checkBalance(at)
 		d.trackBase(at)
+	}
+}
+
+// checkBalance (Hart's conservation check): the open runs on a leg can't add up to more
+// than the leg draws above its base load. If they do for balanceHold, an off step was
+// missed (e.g. it merged with another step); the run that best explains the excess is
+// closed as of when the excess began.
+func (d *Detector) checkBalance(at int64) {
+	if len(d.overSince) != len(d.legs) {
+		d.overSince = make([]int64, len(d.legs))
+	}
+	for k, l := range d.legs {
+		base, ok := d.baseLoad(k, at)
+		if !l.haveStable || !ok {
+			d.overSince[k] = 0
+			continue
+		}
+		var claimed float64
+		for _, r := range d.open {
+			if k < len(r.DP) && r.DP[k] > 0 {
+				claimed += r.DP[k]
+			}
+		}
+		excess := claimed - (l.stableP - base)
+		if excess <= math.Max(edgeThreshold, 0.1*claimed) {
+			d.overSince[k] = 0
+			continue
+		}
+		if d.overSince[k] == 0 {
+			d.overSince[k] = at
+			continue
+		}
+		if at-d.overSince[k] < balanceHold.Milliseconds() {
+			continue
+		}
+		best, bestErr := -1, math.Inf(1)
+		for i, r := range d.open {
+			if k >= len(r.DP) || r.DP[k] <= edgeThreshold/2 || r.DP[k] > excess+math.Max(edgeThreshold, 0.2*r.DP[k]) {
+				continue
+			}
+			if e := math.Abs(r.DP[k] - excess); e < bestErr {
+				best, bestErr = i, e
+			}
+		}
+		if best >= 0 {
+			r := d.open[best]
+			end := d.overSince[k]
+			r.End, r.Base = &end, nil
+			d.closed = append(d.closed, r)
+			d.open = append(d.open[:best], d.open[best+1:]...)
+		}
+		d.overSince[k] = 0
+	}
+}
+
+// adjusts returns the open run a small step belongs to as a change of level (see
+// adjustFrac), or -1. step is the size per leg, positive for on and off alike.
+func (d *Detector) adjusts(step []float64) int {
+	var sum float64
+	for _, v := range step {
+		sum += v
+	}
+	best, bestP := -1, 0.0
+	for i, r := range d.open {
+		p := r.power()
+		if len(r.DP) != len(step) || p < adjustMinRun || sum > adjustFrac*p || p <= bestP {
+			continue
+		}
+		fits := true
+		for k := range step {
+			if (step[k] > edgeThreshold/4) != (r.DP[k] > edgeThreshold/2) || math.Abs(step[k]/sum-r.DP[k]/p) > 0.25 {
+				fits = false
+				break
+			}
+		}
+		if fits {
+			best, bestP = i, p
+		}
+	}
+	return best
+}
+
+// adjust changes an open run's level by dp/dq (an adjustment step, see adjusts).
+func (d *Detector) adjust(i int, dp, dq []float64) {
+	r := &d.open[i]
+	for k := range dp {
+		r.DP[k] += dp[k]
+		if k < len(r.DQ) && k < len(dq) {
+			r.DQ[k] += dq[k]
+		}
 	}
 }
 
@@ -310,6 +411,14 @@ func (d *Detector) flush() {
 	for _, v := range e.dp {
 		sum += v
 	}
+	size := make([]float64, len(e.dp))
+	for k, v := range e.dp {
+		size[k] = math.Abs(v)
+	}
+	if i := d.adjusts(size); i >= 0 && !d.exactOff(e) {
+		d.adjust(i, e.dp, e.dq)
+		return
+	}
 	if sum > 0 {
 		base := make([]float64, len(e.dp))
 		for k, l := range d.legs {
@@ -326,6 +435,32 @@ func (d *Detector) flush() {
 		return
 	}
 	d.matchOff(e)
+}
+
+// exactOff: an off step that matches an open run exactly (it switches off a load of its
+// own rather than adjusting a bigger one).
+func (d *Detector) exactOff(e *pendingEdge) bool {
+	var offSum float64
+	for _, v := range e.dp {
+		offSum -= v
+	}
+	if offSum <= 0 {
+		return false
+	}
+	tol := math.Max(edgeThreshold, 0.2*offSum)
+	for _, r := range d.open {
+		if len(r.DP) != len(e.dp) {
+			continue
+		}
+		var mismatch float64
+		for k := range e.dp {
+			mismatch += math.Abs(r.DP[k] + e.dp[k])
+		}
+		if mismatch <= tol {
+			return true
+		}
+	}
+	return false
 }
 
 // matchOff closes the open run that best matches an off edge: an exact match (same size
