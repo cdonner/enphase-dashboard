@@ -5,8 +5,10 @@ package main
 // entries, so suggestions are ranked by how well power and run time fit.
 
 import (
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 type hint struct {
@@ -66,19 +68,166 @@ func circuitOf(sig Signature) string {
 	return ""
 }
 
-// suggest ranks catalog entries that fit a signature and typical on-time.
-func suggest(sig Signature, onSec float64) []string {
+// Inventory is the owner's appliance list. Catalog entries marked "no" are never
+// suggested and "yes" entries rank first. Unmarked entries are still suggested, so loads
+// that aren't on the list (forgotten, or plugged in now and then) can still show up.
+// Custom entries add appliances the catalog lacks, e.g. a pressure washer.
+type Inventory struct {
+	Catalog map[string]string `json:"catalog"` // catalog name -> "yes" or "no"
+	Custom  []CustomAppliance `json:"custom"`
+}
+
+type CustomAppliance struct {
+	Name    string  `json:"name"`
+	Circuit string  `json:"circuit"` // "120", "240" or "240+"
+	MinW    float64 `json:"minW"`
+	MaxW    float64 `json:"maxW"`
+}
+
+func (inv *Inventory) mark(name string) string {
+	if inv == nil {
+		return ""
+	}
+	return inv.Catalog[name]
+}
+
+func (inv *Inventory) custom() []CustomAppliance {
+	if inv == nil {
+		return nil
+	}
+	return inv.Custom
+}
+
+func validCircuit(c string) bool { return c == "120" || c == "240" || c == "240+" }
+
+var circuitLabel = map[string]string{"120": "120 V", "240": "240 V", "240+": "240 V plus a 120 V motor"}
+
+// validate checks marks against the catalog and custom entries for sane ranges.
+func (inv *Inventory) validate() error {
+	names := map[string]bool{}
+	for _, h := range catalog {
+		names[h.Name] = true
+	}
+	for name, m := range inv.Catalog {
+		if !names[name] {
+			return fmt.Errorf("%q is not in the catalog", name)
+		}
+		if m != "yes" && m != "no" {
+			return fmt.Errorf("mark for %q must be \"yes\" or \"no\"", name)
+		}
+	}
+	if len(inv.Custom) > 50 {
+		return fmt.Errorf("at most 50 custom appliances")
+	}
+	for _, c := range inv.Custom {
+		switch {
+		case c.Name == "" || len(c.Name) > 60:
+			return fmt.Errorf("custom appliance names must be 1-60 characters")
+		case !validCircuit(c.Circuit):
+			return fmt.Errorf("%s: circuit must be 120, 240 or 240+", c.Name)
+		case c.MinW <= 0 || c.MaxW < c.MinW || c.MaxW > 25000:
+			return fmt.Errorf("%s: watts must satisfy 0 < min <= max <= 25000", c.Name)
+		}
+	}
+	return nil
+}
+
+// describe summarizes the list for the AI prompt ("" if nothing is marked).
+func (inv *Inventory) describe() string {
+	var has, hasNot []string
+	for _, h := range catalog {
+		switch inv.mark(h.Name) {
+		case "yes":
+			has = append(has, h.Name)
+		case "no":
+			hasNot = append(hasNot, h.Name)
+		}
+	}
+	for _, c := range inv.custom() {
+		has = append(has, fmt.Sprintf("%s (%s, %.0f-%.0f W)", c.Name, circuitLabel[c.Circuit], c.MinW, c.MaxW))
+	}
+	var b strings.Builder
+	if len(has) > 0 {
+		fmt.Fprintf(&b, "Has: %s.\n", strings.Join(dedupe(has), "; "))
+	}
+	if len(hasNot) > 0 {
+		fmt.Fprintf(&b, "Does not have: %s.\n", strings.Join(dedupe(hasNot), "; "))
+	}
+	return b.String()
+}
+
+func dedupe(names []string) []string {
+	seen := map[string]bool{}
+	out := names[:0:0]
+	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// CatalogEntry is a catalog appliance as shown in the inventory editor.
+type CatalogEntry struct {
+	Name     string   `json:"name"`
+	Circuits []string `json:"circuits"`
+	MinW     float64  `json:"minW"`
+	MaxW     float64  `json:"maxW"`
+}
+
+// catalogEntries merges catalog entries that share a name (e.g. 120 V and 240 V tubs).
+func catalogEntries() []CatalogEntry {
+	var out []CatalogEntry
+	idx := map[string]int{}
+	for _, h := range catalog {
+		i, ok := idx[h.Name]
+		if !ok {
+			idx[h.Name] = len(out)
+			out = append(out, CatalogEntry{Name: h.Name, Circuits: []string{h.Circuit}, MinW: h.MinW, MaxW: h.MaxW})
+			continue
+		}
+		e := &out[i]
+		e.Circuits = append(e.Circuits, h.Circuit)
+		e.MinW, e.MaxW = math.Min(e.MinW, h.MinW), math.Max(e.MaxW, h.MaxW)
+	}
+	return out
+}
+
+// ownedBonus lifts appliances the owner has above unlisted ones; in log units, so an
+// owned appliance still wins against an unlisted one whose range fits ~4x better.
+const ownedBonus = 1.5
+
+// suggest ranks catalog and custom entries that fit a signature and typical on-time,
+// using the owner's inventory (may be nil).
+func suggest(sig Signature, onSec float64, inv *Inventory) []string {
 	circuit := circuitOf(sig)
+	owned := map[string]bool{}
+	var candidates []hint
+	for _, h := range catalog {
+		switch inv.mark(h.Name) {
+		case "no":
+			continue
+		case "yes":
+			owned[h.Name] = true
+		}
+		candidates = append(candidates, h)
+	}
+	for _, c := range inv.custom() {
+		// No character or run-time limits: the owner only knows the size.
+		candidates = append(candidates, hint{Name: c.Name, Circuit: c.Circuit, MinW: c.MinW, MaxW: c.MaxW})
+		owned[c.Name] = true
+	}
 	type scored struct {
 		name  string
 		score float64
 	}
 	var hits []scored
-	for _, h := range catalog {
+	for _, h := range candidates {
 		if h.Circuit != circuit || sig.PowerW < h.MinW*0.85 || sig.PowerW > h.MaxW*1.15 {
 			continue
 		}
-		charOK := false
+		charOK := len(h.Character) == 0
 		for _, c := range h.Character {
 			charOK = charOK || c == sig.Character
 		}
@@ -91,15 +240,19 @@ func suggest(sig Signature, onSec float64) []string {
 		score := -math.Abs(math.Log(sig.PowerW / mid))
 		if onSec < h.MinS {
 			score -= math.Log(h.MinS / math.Max(onSec, 1))
-		} else if onSec > h.MaxS {
+		} else if h.MaxS > 0 && onSec > h.MaxS {
 			score -= math.Log(onSec / h.MaxS)
+		}
+		if owned[h.Name] {
+			score += ownedBonus
 		}
 		hits = append(hits, scored{h.Name, score})
 	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
-	var out []string
-	for i := 0; i < len(hits) && i < 3; i++ {
-		out = append(out, hits[i].name)
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	var names []string
+	for _, h := range hits {
+		names = append(names, h.name)
 	}
-	return out
+	names = dedupe(names)
+	return names[:min(len(names), 3)]
 }

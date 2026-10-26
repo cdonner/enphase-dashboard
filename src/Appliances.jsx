@@ -617,6 +617,135 @@ function AskAI({ providers = [], household, onChanged }) {
   );
 }
 
+const CIRCUITS = { 120: '120 V', 240: '240 V', '240+': '240 V + motor' };
+const normInventory = (inv) => ({ catalog: inv?.catalog ?? {}, custom: inv?.custom ?? [] });
+
+// The owner's appliance list. "Yes" ranks an appliance first in the suggestions, "No" hides
+// it; unmarked ones are still suggested, so loads missing from the list can show up.
+function Inventory({ catalog = [], inventory, onChanged }) {
+  const initial = normInventory(inventory);
+  const [inv, setInv] = useState(initial);
+  const [saved, setSaved] = useState(JSON.stringify(initial));
+  const [error, setError] = useState(null);
+  const [justSaved, setJustSaved] = useState(false);
+  const dirty = JSON.stringify(inv) !== saved;
+  const marked = Object.keys(inv.catalog ?? {}).length + (inv.custom?.length ?? 0);
+
+  const mark = (name, v) => {
+    const next = { ...inv.catalog };
+    if (v) next[name] = v;
+    else delete next[name];
+    setInv({ ...inv, catalog: next });
+  };
+  const setCustom = (i, patch) =>
+    setInv({ ...inv, custom: inv.custom.map((c, j) => (j === i ? { ...c, ...patch } : c)) });
+  async function save() {
+    setError(null);
+    try {
+      const custom = inv.custom.map((c) => ({ ...c, minW: Number(c.minW), maxW: Number(c.maxW) }));
+      const res = await api('/inventory', { method: 'PUT', body: { ...inv, custom } });
+      setInv(normInventory(res));
+      setSaved(JSON.stringify(normInventory(res)));
+      setJustSaved(true);
+      setTimeout(() => setJustSaved(false), 3000);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  return (
+    <details className="inventory">
+      <summary>
+        Your appliances{' '}
+        {justSaved ? (
+          <span className="small saved">✓ Saved</span>
+        ) : marked ? (
+          <span className="muted small">({marked} listed)</span>
+        ) : null}
+      </summary>
+      <p className="muted small">
+        Mark what your home has. Suggestions offer your appliances first and never offer the ones marked No. Unmarked
+        ones are still suggested, so a load you forgot or only plug in now and then can still be named.
+      </p>
+      <ul className="inv-list">
+        {catalog.map((c) => (
+          <li key={c.name}>
+            <span>
+              {c.name}{' '}
+              <span className="muted small">
+                {c.circuits.map((k) => CIRCUITS[k]).join(' or ')} · {fmtW(c.minW)}–{fmtW(c.maxW)}
+              </span>
+            </span>
+            <select
+              aria-label={`Do you have: ${c.name}?`}
+              value={inv.catalog?.[c.name] ?? ''}
+              onChange={(e) => mark(c.name, e.target.value)}
+            >
+              <option value="">Not sure</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </li>
+        ))}
+      </ul>
+      <p className="small">Not in the list (e.g. a pressure washer):</p>
+      {inv.custom.map((c, i) => (
+        <div className="row inv-custom" key={i}>
+          <input
+            aria-label="Name"
+            placeholder="Name"
+            value={c.name}
+            onChange={(e) => setCustom(i, { name: e.target.value })}
+          />
+          <select aria-label="Circuit" value={c.circuit} onChange={(e) => setCustom(i, { circuit: e.target.value })}>
+            {Object.entries(CIRCUITS).map(([k, l]) => (
+              <option key={k} value={k}>
+                {l}
+              </option>
+            ))}
+          </select>
+          <input
+            aria-label="Minimum watts"
+            type="number"
+            min="1"
+            value={c.minW}
+            onChange={(e) => setCustom(i, { minW: e.target.value })}
+          />
+          –
+          <input
+            aria-label="Maximum watts"
+            type="number"
+            min="1"
+            value={c.maxW}
+            onChange={(e) => setCustom(i, { maxW: e.target.value })}
+          />
+          W
+          <button
+            className="ghost link"
+            title="Remove"
+            onClick={() => setInv({ ...inv, custom: inv.custom.filter((_, j) => j !== i) })}
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <div className="row">
+        <button
+          className="ghost"
+          onClick={() => setInv({ ...inv, custom: [...inv.custom, { name: '', circuit: '120', minW: '', maxW: '' }] })}
+        >
+          + Add appliance
+        </button>
+        <button disabled={!dirty} onClick={save}>
+          Save
+        </button>
+      </div>
+      {error && <p className="error">{error}</p>}
+    </details>
+  );
+}
+
 function SigLabel({ appliance, n, onChanged }) {
   const current = appliance.signatures?.[n]?.label ?? '';
   const [editing, setEditing] = useState(false);
@@ -904,7 +1033,10 @@ export default function Appliances() {
             Give several signatures the same name to group them into one appliance.
           </p>
           {lists.data && (
-            <AskAI providers={lists.data.aiProviders} household={lists.data.household} onChanged={reload} />
+            <>
+              <AskAI providers={lists.data.aiProviders} household={lists.data.household} onChanged={reload} />
+              <Inventory catalog={lists.data.catalog} inventory={lists.data.inventory} onChanged={reload} />
+            </>
           )}
           <Groups
             groups={lists.data?.groups}

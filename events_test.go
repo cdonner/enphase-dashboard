@@ -149,7 +149,7 @@ func TestSuggestions(t *testing.T) {
 		{[]float64{350, 0}, []float64{350, 0}, 900, "Furnace blower"},
 	}
 	for _, c := range cases {
-		got := suggest(describe(c.dp, c.dq), c.onSec)
+		got := suggest(describe(c.dp, c.dq), c.onSec, nil)
 		found := false
 		for _, g := range got {
 			found = found || g == c.want
@@ -157,6 +157,38 @@ func TestSuggestions(t *testing.T) {
 		if !found {
 			t.Errorf("%v %.0fs: suggestions %v, want %q among them", c.dp, c.onSec, got, c.want)
 		}
+	}
+}
+
+func TestSuggestionsWithInventory(t *testing.T) {
+	heater := describe([]float64{2250, 2250}, []float64{0, 0})
+	inv := &Inventory{
+		Catalog: map[string]string{"Electric water heater": "no", "Sauna heater (element)": "yes"},
+		Custom:  []CustomAppliance{{Name: "Pressure washer", Circuit: "120", MinW: 1500, MaxW: 1800}},
+	}
+	got := suggest(heater, 1800, inv)
+	if len(got) == 0 || got[0] != "Sauna heater (element)" {
+		t.Errorf("owned appliance should rank first, got %v", got)
+	}
+	for _, g := range got {
+		if g == "Electric water heater" {
+			t.Errorf("appliance marked no was suggested: %v", got)
+		}
+	}
+	// Unmarked catalog entries are still offered.
+	if len(got) < 2 {
+		t.Errorf("unmarked appliances should still be suggested, got %v", got)
+	}
+	washer := describe([]float64{1650, 0}, []float64{30, 0})
+	if got := suggest(washer, 600, inv); len(got) == 0 || got[0] != "Pressure washer" {
+		t.Errorf("custom appliance should rank first, got %v", got)
+	}
+	if !strings.Contains(inv.describe(), "Does not have: Electric water heater") {
+		t.Errorf("describe: %q", inv.describe())
+	}
+	bad := &Inventory{Catalog: map[string]string{"Toaster oven": "yes"}}
+	if bad.validate() == nil {
+		t.Error("unknown catalog name should fail validation")
 	}
 }
 
