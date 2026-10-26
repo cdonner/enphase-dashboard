@@ -153,4 +153,5 @@ type Settings struct {
 	BlendedRate *float64           `json:"blendedRate,omitempty"` // $/kWh; nil = average of the last 12 months
 	Rates       map[string]float64 `json:"rates"`                 // "YYYY-MM" -> $/kWh
 	Household   string             `json:"household,omitempty"`   // owner's description, for AI suggestions
+	Inventory   *Inventory         `json:"inventory,omitempty"`   // owner's appliance list, for suggestions (hints.go)
 }

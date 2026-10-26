@@ -253,7 +253,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		clusters, groups := s.clustersAndGroups()
 		writeJSONResponse(w, 200, map[string]any{
 			"appliances": list, "unnamed": clusters, "groups": groups, "aiProviders": aiProviders(),
-			"household": s.settings.Household,
+			"household": s.settings.Household, "inventory": s.settings.Inventory, "catalog": catalogEntries(),
 		})
 	}))
 
@@ -304,6 +304,33 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		}
 		s.settings = st
 		writeJSONResponse(w, 200, map[string]bool{"ok": true})
+	})
+
+	// The owner's appliance list: catalog marks and custom appliances.
+	mux.HandleFunc("PUT /api/inventory", func(w http.ResponseWriter, r *http.Request) {
+		var inv Inventory
+		if err := json.NewDecoder(r.Body).Decode(&inv); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		for i := range inv.Custom {
+			inv.Custom[i].Name = strings.TrimSpace(inv.Custom[i].Name)
+		}
+		if err := inv.validate(); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		st := s.settings
+		st.Inventory = &inv
+		if err := s.writeJSON("settings.json", st, 0o644); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		s.settings = st
+		s.clusterCache.at = 0 // suggestions depend on the inventory
+		writeJSONResponse(w, 200, inv)
 	})
 
 	// The same request as text, for pasting into a chat app instead of using the API.
@@ -524,6 +551,7 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		st.Household = s.settings.Household // edited separately (PUT /api/household)
+		st.Inventory = s.settings.Inventory // and PUT /api/inventory
 		if err := s.writeJSON("settings.json", st, 0o644); err != nil {
 			writeErr(w, 500, err)
 			return

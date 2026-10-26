@@ -279,3 +279,12 @@ ul.co-start { list-style: none; margin: 0; padding: 4px 8px; display: grid; gap:
 /* A session of repeated runs (e.g. a heater cycling on its thermostat) behind its runs */
 .tl-session { position: absolute; top: 5px; bottom: 5px; border-radius: 2px; opacity: 0.3; pointer-events: none; }
 .redetect { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 8px; }
+
+.inventory { margin: 4px 0 8px; }
+.inventory summary { cursor: pointer; font-size: 14px; }
+.inv-list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 2px; max-height: 360px; overflow-y: auto; }
+.inv-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--grid); font-size: 14px; }
+.inventory select, .inventory input { font: inherit; font-size: 14px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--page); color: var(--text-primary); }
+.inv-custom { align-items: center; gap: 6px; margin-bottom: 6px; }
+.inv-custom input:first-child { flex: 1; min-width: 120px; }
+.inv-custom input[type='number'] { width: 72px; }

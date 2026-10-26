@@ -368,6 +368,10 @@ to another appliance (or a new one), or take it off its appliance. Labels can al
 times, and up to three suggestions from a built-in catalog of common appliances (water heater,
 dryer, oven, AC/heat pump, well pump, microwave, kettle, laser printer, furnace blower, ...). Click a
 suggestion or type a name. The name then applies to all past and future runs with that signature.
+Under **Your appliances**, mark which catalog appliances your home has: *Yes* ranks them first and
+*No* stops them from being suggested. Unmarked ones are still suggested, so a forgotten or portable
+load can still be named, and you can add appliances the catalog lacks (e.g. a pressure washer, with
+its circuit and wattage). The list is also included in the AI prompt.
 To identify one, switch a suspect on or off and watch for the bar on today's timeline.
 
 **Keeping it manageable.** Houses have many small loads that switch on and off by themselves. Three

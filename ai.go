@@ -179,6 +179,7 @@ func (s *Server) aiPrompt() (string, error) {
 	s.mu.Lock()
 	clusters := s.clusters()
 	household := strings.TrimSpace(s.settings.Household)
+	inventory := s.settings.Inventory.describe()
 	var named []string
 	for _, a := range s.appliances {
 		if a.Ignored {
@@ -205,6 +206,9 @@ func (s *Server) aiPrompt() (string, error) {
 		household = "(not provided)"
 	}
 	fmt.Fprintf(&b, "Household description from the owner:\n%s\n\n", household)
+	if inventory != "" {
+		fmt.Fprintf(&b, "Appliance list from the owner (may be incomplete; portable loads are often missing):\n%s\n", inventory)
+	}
 	if len(named) > 0 {
 		fmt.Fprintf(&b, "Already identified (these signatures are taken):\n- %s\n\n", strings.Join(named, "\n- "))
 	}

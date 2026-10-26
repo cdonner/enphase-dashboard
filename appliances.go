@@ -525,7 +525,7 @@ func (s *Server) computeClusters() ([]Cluster, []Group) {
 		sig, median := describe(g.dp, g.dq), g.ons[len(g.ons)/2]
 		c := Cluster{
 			Key: clusterKey(g.dp), Signature: sig, Runs: g.n, Days: len(g.days),
-			EnergyWh: g.energy, MedianOnSec: median, Examples: g.samples, Suggestions: suggest(sig, median),
+			EnergyWh: g.energy, MedianOnSec: median, Examples: g.samples, Suggestions: suggest(sig, median, s.settings.Inventory),
 			Hours: g.hours, ShortOnSec: g.ons[len(g.ons)/10], LongOnSec: g.ons[len(g.ons)*9/10],
 		}
 		sort.Slice(g.starts, func(i, j int) bool { return g.starts[i] < g.starts[j] })
