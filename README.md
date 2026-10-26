@@ -372,7 +372,19 @@ Under **Your appliances**, mark which catalog appliances your home has: *Yes* ra
 *No* stops them from being suggested. Unmarked ones are still suggested, so a forgotten or portable
 load can still be named, and you can add appliances the catalog lacks (e.g. a pressure washer, with
 its circuit and wattage). The list is also included in the AI prompt.
-To identify one, switch a suspect on or off and watch for the bar on today's timeline.
+
+**Teach an appliance.** The surest way to get a clean signature: type the appliance's name, press
+*Start*, switch it on and off two or three times (about 10 seconds each), and press *Stop*. A live
+chart shows the power on each leg meanwhile. The dashboard runs the detector over that window and
+lists the signatures that switched, most switches first. The appliance is the one that switched in
+time with you; a fridge or furnace cycling on its own rarely does. Click a signature to mark its
+switch times on the chart, and add it to the appliance. For an appliance with stages, such as a washer
+or dryer, record a whole program (up to 30 minutes) and add each of its signatures.
+
+**Clean slate.** Under *Known appliances*, *Clean slate…* forgets every name, label, ignored signature,
+AI suggestion and recorded run, after a confirmation, so learning starts over. Your appliance list,
+household notes and the per-second readings stay, so recent days can be re-detected. The old files
+are moved to `backups/clean-slate-<time>/` in the data directory.
 
 **Keeping it manageable.** Houses have many small loads that switch on and off by themselves. Three
 things help:

@@ -519,6 +519,41 @@ func (s *Server) routes(dist fs.FS) http.Handler {
 		writeJSONResponse(w, 200, map[string]int{"runs": n})
 	})
 
+	// Teach mode: the signatures that switched between from and to (ms).
+	mux.HandleFunc("POST /api/appliances/teach", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			From int64 `json:"from"`
+			To   int64 `json:"to"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		found, err := s.teach(body.From, body.To)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSONResponse(w, 200, map[string]any{"candidates": found})
+	})
+
+	// Clean slate: forget all names and recorded runs (moved to a backup folder).
+	mux.HandleFunc("POST /api/appliances/clean-slate", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Confirm bool `json:"confirm"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !body.Confirm {
+			writeErr(w, 400, errors.New(`send {"confirm": true} to erase all names and runs`))
+			return
+		}
+		backup, err := s.cleanSlate()
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSONResponse(w, 200, map[string]string{"backup": backup})
+	})
+
 	mux.HandleFunc("GET /api/settings", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()

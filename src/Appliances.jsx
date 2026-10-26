@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, usePoll } from './api.js';
 import { fmtTime, fmtW, fmtWh } from './format.js';
 
@@ -61,13 +61,16 @@ function shiftDate(key, days) {
 function Selected({ sel, onName, onChanged, onClose }) {
   const { a, sp, s } = sel;
   const [labelText, setLabelText] = useState(sp.label ?? '');
+  // The panel sits below every row, often off screen; bring it into view so the click visibly does something.
+  const ref = useRef(null);
+  useEffect(() => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), [sel]);
   const sigUrl = `/appliances/${a.applianceId}/signatures/${sp.sig}`;
   const done = () => {
     onChanged();
     onClose();
   };
   return (
-    <div className="tl-selected">
+    <div className="tl-selected" ref={ref}>
       <div className="tl-selected-head">
         <strong>
           {label(a)}
@@ -261,7 +264,15 @@ function Timeline({ date, activities, onName, onChanged }) {
           <span className="muted">Hover a bar for details, click it to name it.</span>
         )}
       </div>
-      {selected && <Selected sel={selected} onName={onName} onChanged={onChanged} onClose={() => setSelected(null)} />}
+      {selected && (
+        <Selected
+          key={`${selected.r.key}-${selected.s[0]}`}
+          sel={selected}
+          onName={onName}
+          onChanged={onChanged}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   );
 }
@@ -878,6 +889,264 @@ function Redetect({ date, onDone }) {
   );
 }
 
+// Per-leg power over the teach window, with the switch times of a candidate marked.
+function LegChart({ samples, from, to, marks = [] }) {
+  if (!samples?.length) return <div className="teach-chart muted small">Waiting for readings…</div>;
+  const legs = (samples[0].length - 1) / 2;
+  let max = 100;
+  for (const row of samples) for (let i = 1; i <= legs; i++) max = Math.max(max, row[i]);
+  const x = (t) => ((t - from) / Math.max(1, to - from)) * 600;
+  const y = (w) => 116 - (Math.max(0, w) / max) * 110;
+  const colors = ['var(--series-2)', 'var(--series-3)', 'var(--series-1)'];
+  return (
+    <div className="teach-chart">
+      <svg viewBox="0 0 600 120" preserveAspectRatio="none" role="img" aria-label="Power per leg">
+        {marks.map((t) => (
+          <line key={t} x1={x(t)} x2={x(t)} y1="0" y2="120" className="teach-mark" />
+        ))}
+        {Array.from({ length: legs }, (_, i) => (
+          <polyline
+            key={i}
+            fill="none"
+            stroke={colors[i % colors.length]}
+            strokeWidth="1.5"
+            vectorEffect="non-scaling-stroke"
+            points={samples.map((r) => `${x(r[0]).toFixed(1)},${y(r[1 + i]).toFixed(1)}`).join(' ')}
+          />
+        ))}
+      </svg>
+      <div className="row small muted teach-legend">
+        {Array.from({ length: legs }, (_, i) => (
+          <span key={i} className="legend-item">
+            <span className="rect-key" style={{ background: colors[i % colors.length] }} />
+            Leg {i + 1}: {fmtW(samples[samples.length - 1][1 + i])}
+          </span>
+        ))}
+        <span>scale to {fmtW(max)}</span>
+      </div>
+    </div>
+  );
+}
+
+const TEACH_MAX_MS = 30 * 60_000;
+
+// Teach mode: the owner switches one appliance on and off a few times; the signature that
+// switched most often in that window is offered as the appliance's.
+function Teach({ onChanged }) {
+  const [name, setName] = useState('');
+  const [phase, setPhase] = useState('idle'); // idle | recording | analyzing | results
+  const [win, setWin] = useState(null); // { from, to }
+  const [samples, setSamples] = useState(null);
+  const [found, setFound] = useState([]);
+  const [pick, setPick] = useState(0);
+  const [saved, setSaved] = useState([]);
+  const [error, setError] = useState(null);
+  const [now, setNow] = useState(Date.now());
+
+  const loadSamples = async (from, to) => {
+    const r = await api(`/debug/raw?from=${from}&to=${to}`);
+    setSamples(r.samples);
+  };
+  const stop = async (from) => {
+    const to = Date.now();
+    setWin({ from, to });
+    setPhase('analyzing');
+    try {
+      await loadSamples(from, to);
+      const r = await api('/appliances/teach', { method: 'POST', body: { from, to } });
+      setFound(r.candidates);
+      setPick(0);
+      setSaved([]);
+      setPhase('results');
+    } catch (e) {
+      setError(e.message);
+      setPhase('idle');
+    }
+  };
+
+  useEffect(() => {
+    if (phase !== 'recording') return;
+    const tick = async () => {
+      const t = Date.now();
+      setNow(t);
+      if (t - win.from >= TEACH_MAX_MS) return stop(win.from);
+      try {
+        await loadSamples(win.from - 30_000, t);
+      } catch {
+        // keep the last chart
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => clearInterval(id);
+  }, [phase, win]);
+
+  const start = () => {
+    setError(null);
+    setSamples(null);
+    setWin({ from: Date.now() });
+    setPhase('recording');
+  };
+  const save = async (c) => {
+    try {
+      await api('/appliances', { method: 'POST', body: { name: name.trim(), dp: c.signature.dp, dq: c.signature.dq } });
+      setSaved((s) => [...s, c]);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+  const reset = () => {
+    setPhase('idle');
+    setFound([]);
+    setSamples(null);
+  };
+
+  return (
+    <section className="card teach">
+      <h2>Teach an appliance</h2>
+      {phase === 'idle' && (
+        <>
+          <p className="muted small">
+            Name the appliance and press Start. Then switch it on, wait about 10 seconds, switch it off, and do that
+            two or three times. Press Stop when done. Its signature is the step that switches in time with you; loads
+            that cycle on their own don’t. Works best while the house is quiet, and for a washer or dryer you can record a
+            whole program (up to 30 minutes).
+          </p>
+          <form
+            className="row name-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (name.trim()) start();
+            }}
+          >
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Appliance, e.g. Microwave"
+              aria-label="Appliance to teach"
+              list="appliance-names"
+            />
+            <button type="submit" disabled={!name.trim()}>
+              Start
+            </button>
+          </form>
+        </>
+      )}
+      {phase === 'recording' && (
+        <>
+          <p>
+            <strong>Recording {name.trim()}</strong> <span className="muted">· {fmtDur((now - win.from) / 1000)}</span>
+          </p>
+          <p className="muted small">Switch it on, wait, switch it off. Repeat two or three times, then press Stop.</p>
+          <LegChart samples={samples} from={win.from - 30_000} to={now} marks={[win.from]} />
+          <div className="row">
+            <button onClick={() => stop(win.from)}>Stop</button>
+            <button className="ghost" onClick={reset}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+      {phase === 'analyzing' && <p className="muted">Looking for the steps…</p>}
+      {phase === 'results' && (
+        <>
+          <LegChart samples={samples} from={win.from} to={win.to} marks={found[pick]?.times ?? []} />
+          {found.length === 0 ? (
+            <p className="muted">
+              No steps of 60 W or more in that time. Was the appliance on a different circuit, or too small to see?
+            </p>
+          ) : (
+            <>
+              <p className="muted small">
+                Most switches first. Select one to see when it switched (lines on the chart), then add it to{' '}
+                <strong>{name.trim()}</strong>. Add several for an appliance with stages, e.g. heater and motor.
+              </p>
+              <ul className="teach-list">
+                {found.map((c, i) => {
+                  const done = saved.includes(c);
+                  return (
+                    <li key={i} className={i === pick ? 'picked' : ''}>
+                      <button className="ghost teach-pick" onClick={() => setPick(i)} aria-pressed={i === pick}>
+                        <span className="rect-key" style={{ background: typeOf(c.signature.legs).color }} />
+                        {sigText(c.signature)}
+                        <span className="muted small">
+                          {' '}
+                          · switched on {c.ons}×, off {c.offs}×
+                          {c.appliance ? ` · already named ${c.appliance}` : ''}
+                        </span>
+                      </button>
+                      <button disabled={done} className={i === 0 ? '' : 'ghost'} onClick={() => save(c)}>
+                        {done ? 'Added' : `Add to ${name.trim()}`}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          <div className="row">
+            <button className="ghost" onClick={start}>
+              Record again
+            </button>
+            <button className="ghost" onClick={reset}>
+              Done
+            </button>
+          </div>
+        </>
+      )}
+      {error && <p className="error">{error}</p>}
+    </section>
+  );
+}
+
+function CleanSlate({ onDone }) {
+  const [asking, setAsking] = useState(false);
+  const [state, setState] = useState(null);
+  if (!asking)
+    return (
+      <p className="muted small clean-slate">
+        <button className="ghost danger" onClick={() => setAsking(true)}>
+          Clean slate…
+        </button>
+        {state ?? 'Forget all names and recorded runs, and start learning from scratch.'}
+      </p>
+    );
+  return (
+    <div className="clean-slate-confirm">
+      <p>
+        <strong>Start over?</strong> This removes every named appliance, signature label and ignored signature, the AI
+        suggestions, and all recorded runs. Your appliance list, household notes and the last 7 days of per-second
+        readings stay, so you can re-detect recent days afterwards. The old files are moved to a backup folder in the
+        data directory.
+      </p>
+      <div className="row">
+        <button
+          className="danger"
+          disabled={state === 'busy'}
+          onClick={async () => {
+            setState('busy');
+            try {
+              const r = await api('/appliances/clean-slate', { method: 'POST', body: { confirm: true } });
+              setState(`Started over. Backup: ${r.backup}`);
+              setAsking(false);
+              onDone();
+            } catch (e) {
+              setState(e.message);
+            }
+          }}
+        >
+          {state === 'busy' ? 'Erasing…' : 'Erase names and runs'}
+        </button>
+        <button className="ghost" onClick={() => setAsking(false)}>
+          Cancel
+        </button>
+      </div>
+      {state && state !== 'busy' && <p className="error">{state}</p>}
+    </div>
+  );
+}
+
 export default function Appliances() {
   const today = dateKey(new Date());
   const [date, setDate] = useState(today);
@@ -1025,6 +1294,8 @@ export default function Appliances() {
         </details>
       </section>
 
+      <Teach onChanged={reload} />
+
       <div className="two-col">
         <section className="card">
           <h2>Needs a name</h2>
@@ -1054,6 +1325,7 @@ export default function Appliances() {
         <section className="card">
           <h2>Known appliances</h2>
           <Known appliances={lists.data?.appliances} onChanged={reload} />
+          <CleanSlate onDone={reload} />
         </section>
       </div>
     </>
